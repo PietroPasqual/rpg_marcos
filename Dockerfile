@@ -9,4 +9,5 @@ COPY . .
 
 EXPOSE 8000
 
-CMD ["uvicorn", "main_api:app", "--host", "0.0.0.0", "--port", "8000"]
+# Serviços de hospedagem (Render, Railway, Fly...) informam a porta em $PORT; localmente usa 8000.
+CMD ["sh", "-c", "uvicorn main_api:app --host 0.0.0.0 --port ${PORT:-8000}"]

@@ -61,7 +61,7 @@ No site, a tela **Conta** (`#/conta`) faz o login e a sincronização acontece s
 
 Configuração (variáveis de ambiente do servidor):
 
-* `ACCOUNTS_DATABASE_URL`: banco das contas (SQLite ou Postgres).
+* `ACCOUNTS_DATABASE_URL`: banco das contas. SQLite (padrão) ou Postgres; URLs `postgres://`/`postgresql://` dos provedores são aceitas como vêm.
 * `ACCOUNTS_SECRET`: segredo que assina os tokens. Sem ele, um segredo é gerado e guardado no banco das contas. Em produção, defina um valor longo e aleatório.
 * `ACCOUNTS_REGISTRATION=closed`: fecha novos cadastros (útil para uso pessoal depois de criar a sua conta).
 * `ACCOUNTS_TRUST_PROXY=1`: atrás de proxy reverso, usa o `X-Forwarded-For` nos limites de tentativas por IP.
@@ -69,7 +69,7 @@ Configuração (variáveis de ambiente do servidor):
 
 Segurança: senhas com scrypt (nunca guardadas em texto), tokens JWT assinados com verificação de versão (trocar a senha ou "sair em todos os aparelhos" invalida os anteriores), limite de tentativas de login/cadastro, isolamento total entre contas e limites de tamanho e quantidade de fichas. **Não há recuperação de senha por e-mail** (o servidor não envia e-mails); use `POST /auth/change-password` estando logado e guarde a senha. Use sempre HTTPS na internet.
 
-Para o site no GitHub Pages usar um servidor de contas, publique este servidor em algum lugar com HTTPS (o `Dockerfile` está pronto) e defina a variável de repositório `ACCOUNTS_URL` (Settings → Secrets and variables → Actions → Variables) com o endereço dele, sem barra no final. Sem essa variável, o site publicado esconde o login.
+Passo a passo para publicar tudo de graça (GitHub Pages + Render + Neon): veja [DEPLOY.md](DEPLOY.md). Resumo: para o site no GitHub Pages usar um servidor de contas, publique este servidor em algum lugar com HTTPS (o `Dockerfile` está pronto) e defina a variável de repositório `ACCOUNTS_URL` (Settings → Secrets and variables → Actions → Variables) com o endereço dele, sem barra no final. Sem essa variável, o site publicado esconde o login.
 
 ## Montador de ficha e Livro de Regras (site)
 

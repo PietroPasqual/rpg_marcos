@@ -10,4 +10,5 @@ _TEST_DB = Path(tempfile.mkdtemp(prefix="dnd5e-catalog-tests-")) / "catalog.db"
 os.environ["DATABASE_URL"] = f"sqlite:///{_TEST_DB}"
 
 _ACCOUNTS_DB = Path(tempfile.mkdtemp(prefix="dnd5e-accounts-tests-")) / "accounts.db"
-os.environ["ACCOUNTS_DATABASE_URL"] = f"sqlite:///{_ACCOUNTS_DB}"
+# TEST_ACCOUNTS_DATABASE_URL roda os testes de contas em outro banco (ex.: um Postgres descartável).
+os.environ["ACCOUNTS_DATABASE_URL"] = os.getenv("TEST_ACCOUNTS_DATABASE_URL") or f"sqlite:///{_ACCOUNTS_DB}"

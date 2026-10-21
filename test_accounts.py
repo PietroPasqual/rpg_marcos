@@ -192,3 +192,9 @@ def test_cors_allows_the_authorization_header_for_the_site_origin() -> None:
     assert preflight.status_code == 200
     assert "PUT" in preflight.headers["access-control-allow-methods"]
     assert "authorization" in preflight.headers["access-control-allow-headers"].lower()
+
+
+def test_postgres_urls_use_the_psycopg_driver() -> None:
+    assert accounts._database_url("postgres://u:p@host/db") == "postgresql+psycopg://u:p@host/db"
+    assert accounts._database_url("postgresql://u:p@host/db?sslmode=require") == "postgresql+psycopg://u:p@host/db?sslmode=require"
+    assert accounts._database_url("sqlite:///./x.db") == "sqlite:///./x.db"

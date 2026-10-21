@@ -43,7 +43,17 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy import Boolean, ForeignKey, Integer, String, Text, create_engine, delete, func, select
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 
-ACCOUNTS_DATABASE_URL = os.getenv("ACCOUNTS_DATABASE_URL", "sqlite:///./dnd5e_accounts.db")
+
+
+def _database_url(raw: str) -> str:
+    """Aceita a URL que os provedores de Postgres costumam dar (postgres:// ou postgresql://) e usa o driver psycopg."""
+    for prefix in ("postgres://", "postgresql://"):
+        if raw.startswith(prefix):
+            return "postgresql+psycopg://" + raw[len(prefix):]
+    return raw
+
+
+ACCOUNTS_DATABASE_URL = _database_url(os.getenv("ACCOUNTS_DATABASE_URL", "sqlite:///./dnd5e_accounts.db"))
 TOKEN_DAYS = int(os.getenv("ACCOUNTS_TOKEN_DAYS", "30"))
 MAX_CHARACTERS_PER_USER = 500
 MAX_CHARACTER_BYTES = 512 * 1024
@@ -51,7 +61,7 @@ MIN_PASSWORD_LENGTH = 8
 MAX_PASSWORD_LENGTH = 200
 
 _connect_args = {"check_same_thread": False} if ACCOUNTS_DATABASE_URL.startswith("sqlite") else {}
-accounts_engine = create_engine(ACCOUNTS_DATABASE_URL, connect_args=_connect_args, future=True)
+accounts_engine = create_engine(ACCOUNTS_DATABASE_URL, connect_args=_connect_args, future=True, pool_pre_ping=True)
 AccountsSession = sessionmaker(bind=accounts_engine, autoflush=False, autocommit=False, expire_on_commit=False)
 
 

@@ -1,0 +1,7 @@
+.venv
+__pycache__
+*.db
+web/node_modules
+web/dist
+web/public/data
+.git
