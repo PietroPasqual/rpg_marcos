@@ -1,0 +1,9 @@
+services:
+  api:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=sqlite:///./dnd5e_2024_catalog.db
+    volumes:
+      - ./data:/app/data

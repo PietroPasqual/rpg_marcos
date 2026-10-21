@@ -1,0 +1,16 @@
+[project]
+name = "dnd5e-2024-catalog-api"
+version = "1.0.0"
+description = "API REST de Catálogo do Dungeons & Dragons 5e (Edição 2024 / SRD 5.2.1) com ETL Wikidot"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.31.0",
+    "pydantic>=2.9.0",
+    "sqlalchemy>=2.0.35",
+    "httpx[http2]>=0.27.2",
+    "beautifulsoup4>=4.12.3",
+    "lxml>=5.3.0",
+    "pytest>=8.3.0",
+]
