@@ -270,8 +270,10 @@ function computeAc(character: Character, plan: Plan, scores: Record<Ability, Sco
     options.push({ value: body.base_ac + dexPart, formula: `${body.name}${body.adds_dex_modifier ? ' + Destreza' : ''}` })
   } else {
     options.push({ value: 10 + dex, formula: '10 + Destreza' })
-    if (classLevel(plan, 'barbarian') > 0) options.push({ value: 10 + dex + scores.CON.mod, formula: 'Defesa sem Armadura (10 + Des + Con)' })
-    if (classLevel(plan, 'monk') > 0 && !shield) options.push({ value: 10 + dex + scores.WIS.mod, formula: 'Defesa sem Armadura (10 + Des + Sab)' })
+    // Multiclasse: Defesa sem Armadura não se ganha duas vezes; vale a da classe que a concedeu primeiro.
+    const unarmored = plan.classes.find((c) => c.slug === 'barbarian' || c.slug === 'monk')?.slug
+    if (unarmored === 'barbarian') options.push({ value: 10 + dex + scores.CON.mod, formula: 'Defesa sem Armadura (10 + Des + Con)' })
+    if (unarmored === 'monk' && !shield) options.push({ value: 10 + dex + scores.WIS.mod, formula: 'Defesa sem Armadura (10 + Des + Sab)' })
     if (isDraconic(plan)) options.push({ value: 10 + dex + scores.CHA.mod, formula: 'Resiliência Dracônica (10 + Des + Car)' })
   }
 
@@ -509,7 +511,7 @@ export const hpRollKey = (classSlug: string, level: number): string => `${classS
 export function classHitPoints(character: Character, plan: Plan, conMod: number): number {
   let hp = 0
   plan.classes.forEach((c, classIndex) => {
-    const die = Number(c.cls.hit_point_die.replace('d', ''))
+    const die = c.hitDie
     for (let level = 1; level <= c.level; level++) {
       const rolled = character.hpRolls[hpRollKey(c.slug, level)]
       const usesRoll = character.hpMode === 'manual' && Number.isInteger(rolled) && rolled! >= 1 && rolled! <= die
@@ -551,7 +553,7 @@ export function derive(character: Character, catalog: Catalog): Derived {
   const saves = ABILITIES.map((ability) => ({ ability, proficient: saveProfs.has(ability), mod: scores[ability].mod + (saveProfs.has(ability) ? pb : 0) }))
 
   // Pontos de vida
-  const hitDie = Number(plan.cls?.hit_point_die.replace('d', '') ?? 8)
+  const hitDie = plan.classes[0]?.hitDie ?? 8
   const conMod = scores.CON.mod
   let hp = plan.cls ? classHitPoints(character, plan, conMod) : 0
   if (plan.species?.traits.some((t) => t.name === 'Dwarven Toughness')) hp += plan.level

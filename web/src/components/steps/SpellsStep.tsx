@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import type { SpellData } from '../../api/types'
-import { withPicks } from '../../domain/character'
+import { picksOf, withPicks } from '../../domain/character'
 import { formatBonus } from '../../domain/derive'
 import type { ClassPlan } from '../../domain/plan'
 import { spellPools } from '../../domain/spells'
@@ -88,7 +88,7 @@ function ClassSpells({ cp, derived, catalog, change }: StepProps & { cp: ClassPl
   const pools = spellPools(picks, cp, catalog)
   const multi = derived.plan.classes.length > 1
   const caster = spellcasting?.casters.find((c) => c.slug === cp.slug)
-  const patchSpells = (p: Partial<typeof picks.spells>) => change((c) => withPicks(c, cp.index, { spells: { ...picks.spells, ...p } }))
+  const patchSpells = (p: Partial<typeof picks.spells>) => change((c) => withPicks(c, cp.index, { spells: { ...picksOf(c, cp.index).spells, ...p } }))
   const suffix = multi ? ` de ${cp.cls.name}` : ''
 
   return (

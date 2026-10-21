@@ -133,7 +133,7 @@ export function prune(input: Character, catalog: Catalog): Character {
   // PV registrados: só dados que existem (nível ≥ 2 na classe inicial, ≥ 1 nas demais) e dentro do dado de vida
   const hpRolls: Record<string, number> = {}
   planAfter.classes.forEach((cp, index) => {
-    const die = Number(cp.cls.hit_point_die.replace('d', ''))
+    const die = cp.hitDie
     for (let level = index === 0 ? 2 : 1; level <= cp.level; level++) {
       const rolled = character.hpRolls[hpRollKey(cp.slug, level)]
       if (Number.isInteger(rolled) && rolled! >= 1 && rolled! <= die) hpRolls[hpRollKey(cp.slug, level)] = rolled!

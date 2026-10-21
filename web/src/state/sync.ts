@@ -95,17 +95,27 @@ export interface SyncResult {
   pulled: number
   removed: number
   conflicts: number
+  /** Fichas recusadas pelo servidor (ex.: grande demais, limite da conta): ficam só aqui, sem travar as demais. */
+  failed: number
 }
 
 const isConflict = (e: unknown): boolean => e instanceof AccountsError && e.status === 409
+/** Recusa definitiva de uma ficha (4xx que não é sessão, conflito nem limite de tentativas). */
+const isRejected = (e: unknown): boolean => e instanceof AccountsError && e.status !== undefined && e.status >= 400 && e.status < 500 && ![401, 409, 429].includes(e.status)
 
-/** Executa um ciclo de sincronização. Conflitos (409) significam que o servidor tem algo mais novo: resolvem no próximo ciclo. */
+/**
+ * Executa um ciclo de sincronização. Conflitos (409) significam que o servidor tem algo mais novo: resolvem no próximo ciclo.
+ * As escritas locais conferem o estado atual antes de gravar, porque a pessoa pode editar ou excluir fichas enquanto o ciclo
+ * espera a rede: nesse caso a ação é pulada e o próximo ciclo (pedido pela própria edição) resolve.
+ */
 export async function runSync(deps: SyncDeps): Promise<SyncResult> {
   const remote = await deps.list()
-  const actions = planSync(deps.readLocal(), deps.readTombstones(), remote)
-  const result: SyncResult = { pushed: 0, pulled: 0, removed: 0, conflicts: 0 }
-  const tombstones = { ...deps.readTombstones() }
-  let tombstonesChanged = false
+  const localBefore = new Map(deps.readLocal().map((c) => [c.id, c.updatedAt]))
+  const tombstonesBefore = deps.readTombstones()
+  const actions = planSync(deps.readLocal(), tombstonesBefore, remote)
+  const result: SyncResult = { pushed: 0, pulled: 0, removed: 0, conflicts: 0, failed: 0 }
+  const cleared = new Set<string>()
+  const untouched = (id: string) => deps.readLocal().find((c) => c.id === id)?.updatedAt === localBefore.get(id)
 
   for (const action of actions) {
     try {
@@ -115,33 +125,38 @@ export async function runSync(deps: SyncDeps): Promise<SyncResult> {
           result.pushed++
           break
         case 'pull':
+          if (!untouched(action.character.id)) break
           deps.writeLocal(action.character)
+          localBefore.set(action.character.id, action.character.updatedAt)
           result.pulled++
-          if (action.clearTombstone) {
-            delete tombstones[action.character.id]
-            tombstonesChanged = true
-          }
+          if (action.clearTombstone) cleared.add(action.character.id)
           break
         case 'remove-local':
+          if (!untouched(action.id)) break
           deps.removeLocal(action.id)
+          localBefore.delete(action.id)
           result.removed++
           break
         case 'push-delete':
           await deps.remove(action.id, action.deletedAt)
-          delete tombstones[action.id]
-          tombstonesChanged = true
+          cleared.add(action.id)
           break
         case 'clear-tombstone':
-          delete tombstones[action.id]
-          tombstonesChanged = true
+          cleared.add(action.id)
           break
       }
     } catch (e) {
-      if (!isConflict(e)) throw e
-      result.conflicts++
+      if (isConflict(e)) result.conflicts++
+      else if (isRejected(e)) result.failed++
+      else throw e
     }
   }
-  if (tombstonesChanged) deps.writeTombstones(tombstones)
+  if (cleared.size > 0) {
+    // Relê os marcadores: exclusões feitas durante o ciclo não podem ser perdidas.
+    const latest = { ...deps.readTombstones() }
+    for (const id of cleared) if (latest[id] === tombstonesBefore[id]) delete latest[id]
+    deps.writeTombstones(latest)
+  }
   return result
 }
 
@@ -173,6 +188,9 @@ export function useSyncState(): SyncState {
   )
 }
 
+const isCurrent = (session: Session) => getSession()?.token === session.token
+
+/** Dependências reais. Depois de sair da conta (ou trocar de conta), um ciclo ainda em andamento não grava mais nada aqui. */
 function depsFor(session: Session): SyncDeps {
   return {
     list: async () => (await accountsApi.list(session.token)).map(toRemote),
@@ -180,9 +198,9 @@ function depsFor(session: Session): SyncDeps {
     remove: async (id, at) => void (await accountsApi.remove(session.token, id, at)),
     readLocal: loadCharacters,
     readTombstones,
-    writeLocal: (character) => void writeCharacterQuiet(character),
-    removeLocal: removeCharacterQuiet,
-    writeTombstones,
+    writeLocal: (character) => void (isCurrent(session) && writeCharacterQuiet(character)),
+    removeLocal: (id) => void (isCurrent(session) && removeCharacterQuiet(id)),
+    writeTombstones: (tombstones) => void (isCurrent(session) && writeTombstones(tombstones)),
   }
 }
 
@@ -206,17 +224,26 @@ export async function syncNow(): Promise<void> {
   setState({ phase: 'syncing', error: null })
   try {
     const result = await runSync(depsFor(session))
-    setState({ phase: 'idle', lastSyncedAt: new Date().toISOString(), error: null })
-    if (result.pulled > 0 || result.removed > 0) window.dispatchEvent(new Event('characters-changed'))
-    if (result.conflicts > 0) again = true
-  } catch (e) {
-    if (e instanceof AccountsError && e.status === 401) {
-      setSession(null)
-      setState({ phase: 'off', error: 'Sua sessão expirou. Entre de novo para continuar sincronizando.' })
-    } else {
-      setState({ phase: 'error', error: e instanceof Error ? e.message : 'Falha ao sincronizar.' })
+    // Saiu ou trocou de conta durante o ciclo: o resultado não vale mais (um pedido pendente roda com a sessão nova).
+    if (isCurrent(session)) {
+      setState(
+        result.failed > 0
+          ? { phase: 'error', error: `${result.failed} ficha(s) recusada(s) pelo servidor (grande demais ou limite da conta); elas continuam neste navegador.` }
+          : { phase: 'idle', lastSyncedAt: new Date().toISOString(), error: null },
+      )
+      if (result.pulled > 0 || result.removed > 0) window.dispatchEvent(new Event('characters-changed'))
+      if (result.conflicts > 0) again = true
     }
-    again = false
+  } catch (e) {
+    if (isCurrent(session)) {
+      if (e instanceof AccountsError && e.status === 401) {
+        setSession(null)
+        setState({ phase: 'off', error: 'Sua sessão expirou. Entre de novo para continuar sincronizando.' })
+      } else {
+        setState({ phase: 'error', error: e instanceof Error ? e.message : 'Falha ao sincronizar.' })
+      }
+      again = false
+    }
   } finally {
     running = false
   }

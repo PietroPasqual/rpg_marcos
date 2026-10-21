@@ -39,6 +39,7 @@ from typing import Annotated, Any, Generator
 import jwt
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy import Boolean, ForeignKey, Integer, String, Text, create_engine, delete, func, select
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 
@@ -176,15 +177,30 @@ class RateLimiter:
         self.limit, self.window = limit, window_seconds
         self.hits: dict[str, deque[float]] = defaultdict(deque)
 
-    def check(self, key: str) -> None:
+    def _recent(self, key: str) -> deque[float]:
         now = time.monotonic()
         hits = self.hits[key]
         while hits and now - hits[0] > self.window:
             hits.popleft()
+        if not hits:
+            del self.hits[key]  # não acumula chaves antigas
+            return self.hits[key]
+        return hits
+
+    def guard(self, key: str) -> None:
+        """Recusa (429) se a chave já atingiu o limite, sem contar esta tentativa."""
+        hits = self._recent(key)
         if len(hits) >= self.limit:
-            retry = int(self.window - (now - hits[0])) + 1
+            retry = int(self.window - (time.monotonic() - hits[0])) + 1
             raise HTTPException(status_code=429, detail="Muitas tentativas. Aguarde alguns minutos e tente de novo.", headers={"Retry-After": str(retry)})
-        hits.append(now)
+
+    def record(self, key: str) -> None:
+        self._recent(key).append(time.monotonic())
+
+    def check(self, key: str) -> None:
+        """Recusa se atingiu o limite; senão conta esta tentativa."""
+        self.guard(key)
+        self.record(key)
 
     def reset(self) -> None:
         self.hits.clear()
@@ -196,7 +212,8 @@ register_limiter = RateLimiter(limit=5, window_seconds=3600)
 
 def client_key(request: Request) -> str:
     if os.getenv("ACCOUNTS_TRUST_PROXY") == "1":
-        forwarded = request.headers.get("X-Forwarded-For", "").split(",")[0].strip()
+        # O último endereço é o que o proxy confiável acrescentou; os anteriores vêm do cliente e podem ser forjados.
+        forwarded = request.headers.get("X-Forwarded-For", "").split(",")[-1].strip()
         if forwarded:
             return forwarded
     return request.client.host if request.client else "unknown"
@@ -253,9 +270,12 @@ def _session_payload(session: Session, user: UserModel) -> dict[str, Any]:
 
 
 def _check_timestamp(value: str, field: str) -> str:
-    if not _TIMESTAMP.match(value):
+    """Valida e normaliza para milissegundos fixos (YYYY-MM-DDTHH:MM:SS.mmmZ), para que comparar as strings compare as datas."""
+    match = _TIMESTAMP.match(value)
+    if not match:
         raise HTTPException(status_code=422, detail=f"{field} deve ser uma data ISO 8601 em UTC (ex.: 2026-01-31T12:00:00.000Z).")
-    return value
+    fraction = (match.group(1) or ".")[1:]
+    return f"{value[:19]}.{(fraction + '000')[:3]}Z"
 
 
 def _record_payload(row: CharacterRecord) -> dict[str, Any]:
@@ -289,18 +309,26 @@ def register(body: Credentials, request: Request, session: DbDep) -> dict[str, A
         raise HTTPException(status_code=409, detail="Já existe uma conta com este e-mail.")
     user = UserModel(email=email, password_hash=hash_password(body.password))
     session.add(user)
-    session.commit()
+    try:
+        session.commit()
+    except IntegrityError:  # dois cadastros simultâneos com o mesmo e-mail
+        session.rollback()
+        raise HTTPException(status_code=409, detail="Já existe uma conta com este e-mail.")
     return _session_payload(session, user)
 
 
 @router.post("/auth/login")
 def login(body: Credentials, request: Request, session: DbDep) -> dict[str, Any]:
     email = body.email.strip().lower()
-    auth_limiter.check(f"ip:{client_key(request)}")
-    auth_limiter.check(f"email:{email}")
+    ip_key, email_key = f"ip:{client_key(request)}", f"email:{email}"
+    auth_limiter.guard(ip_key)
+    auth_limiter.guard(email_key)
     user = session.scalar(select(UserModel).where(UserModel.email == email))
     ok = verify_password(body.password, user.password_hash if user else _DUMMY_HASH)
     if not user or not ok:
+        # Só tentativas erradas contam: um login correto nunca é bloqueado por logins anteriores bem-sucedidos.
+        auth_limiter.record(ip_key)
+        auth_limiter.record(email_key)
         raise HTTPException(status_code=401, detail="E-mail ou senha incorretos.")
     return _session_payload(session, user)
 
@@ -363,14 +391,17 @@ def put_character(character_id: str, body: CharacterPut, user: UserDep, session:
         raise HTTPException(status_code=413, detail="A ficha é grande demais para sincronizar.")
 
     row = session.get(CharacterRecord, (user.id, character_id))
-    if row is None:
-        total = session.scalar(select(func.count()).select_from(CharacterRecord).where(CharacterRecord.user_id == user.id)) or 0
+    if row is not None and updated_at < row.updated_at:
+        raise HTTPException(status_code=409, detail="O servidor tem uma versão mais recente desta ficha.", headers={"X-Server-Updated-At": row.updated_at})
+    if row is None or row.deleted:
+        # Só fichas ativas contam para o limite (marcadores de exclusão não). 403, e não 409: o cliente trata 409
+        # como conflito de versão e tentaria de novo sem parar.
+        total = session.scalar(select(func.count()).select_from(CharacterRecord).where(CharacterRecord.user_id == user.id, CharacterRecord.deleted.is_(False))) or 0
         if total >= MAX_CHARACTERS_PER_USER:
-            raise HTTPException(status_code=409, detail=f"Limite de {MAX_CHARACTERS_PER_USER} fichas por conta.")
+            raise HTTPException(status_code=403, detail=f"Limite de {MAX_CHARACTERS_PER_USER} fichas por conta.")
+    if row is None:
         row = CharacterRecord(user_id=user.id, id=character_id)
         session.add(row)
-    elif updated_at < row.updated_at:
-        raise HTTPException(status_code=409, detail="O servidor tem uma versão mais recente desta ficha.", headers={"X-Server-Updated-At": row.updated_at})
     row.data, row.updated_at, row.deleted, row.server_updated_at = raw, updated_at, False, _now()
     session.commit()
     return {"id": row.id, "updated_at": row.updated_at, "server_updated_at": row.server_updated_at}
@@ -382,9 +413,9 @@ def delete_character(character_id: str, user: UserDep, session: DbDep, deleted_a
     stamp = _check_timestamp(deleted_at, "deleted_at") if deleted_at else _now()
     row = session.get(CharacterRecord, (user.id, character_id))
     if row is None:
-        row = CharacterRecord(user_id=user.id, id=character_id)
-        session.add(row)
-    elif stamp < row.updated_at:
+        # O servidor nunca recebeu esta ficha: nenhum outro aparelho pode tê-la daqui, então não há marcador a guardar.
+        return {"id": character_id, "updated_at": stamp, "deleted": True}
+    if stamp < row.updated_at:
         raise HTTPException(status_code=409, detail="A ficha foi editada depois da exclusão.", headers={"X-Server-Updated-At": row.updated_at})
     row.data, row.updated_at, row.deleted, row.server_updated_at = "{}", stamp, True, _now()
     session.commit()

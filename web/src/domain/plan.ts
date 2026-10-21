@@ -47,6 +47,8 @@ export interface ClassPlan {
   cls: ClassData
   /** Nível nesta classe. */
   level: number
+  /** Tamanho do dado de vida (8 para d8). */
+  hitDie: number
   picks: ClassPicks
   subclass: SubclassData | null
   subclassOptions: SubclassData[]
@@ -206,6 +208,7 @@ function buildClassPlan(character: Character, catalog: Catalog, index: number, l
     slug: cls.slug,
     cls,
     level,
+    hitDie: Number(cls.hit_point_die.replace('d', '')),
     picks,
     subclass,
     subclassOptions,
@@ -292,8 +295,9 @@ export function buildPlan(character: Character, catalog: Catalog): Plan {
   // ---- Espaços de magia e dados de vida ----
   const { slots, pact } = combinedSlots(classes, catalog)
   const maxSpellLevel = Math.max(0, ...Object.keys(slots).map(Number), pact?.level ?? 0)
-  if (classes.length > 1) for (const c of classes) if (c.casting.ability) c.casting.maxSpellLevel = maxSpellLevel
-  const hitDice = classes.map((c) => ({ slug: c.slug, name: c.cls.name, die: Number(c.cls.hit_point_die.replace('d', '')), count: c.level }))
+  // Cada classe continua preparando magias como se fosse a única (regra de multiclasse): `c.casting.maxSpellLevel` fica
+  // com o nível da própria classe; só os espaços são combinados.
+  const hitDice = classes.map((c) => ({ slug: c.slug, name: c.cls.name, die: c.hitDie, count: c.level }))
 
   return {
     level,

@@ -179,7 +179,7 @@ function HitPointsSection({ character, derived, change }: StepProps) {
   const manual = character.hpMode === 'manual'
   const roll = (die: number) => 1 + Math.floor(Math.random() * die)
   const levels = plan.classes.flatMap((cp) => {
-    const die = Number(cp.cls.hit_point_die.replace('d', ''))
+    const die = cp.hitDie
     return Array.from({ length: cp.level }, (_, i) => ({ slug: cp.slug, name: cp.cls.name, level: i + 1, die, fixed: cp.index === 0 && i === 0 }))
   })
   const setRoll = (slug: string, level: number, value: number | null) =>

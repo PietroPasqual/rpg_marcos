@@ -84,6 +84,12 @@ def test_login_is_rate_limited() -> None:
     assert blocked.status_code == 429 and int(blocked.headers["retry-after"]) > 0
 
 
+def test_successful_logins_do_not_count_towards_the_limit() -> None:
+    register("felipe@example.com")
+    for _ in range(15):
+        assert client.post("/api/v1/auth/login", json={"email": "felipe@example.com", "password": PASSWORD}).status_code == 200
+
+
 def test_change_password_and_logout_all_invalidate_old_tokens() -> None:
     session = register("fabio@example.com")
     assert client.post("/api/v1/auth/change-password", headers=auth(session), json={"current_password": "errada-errada", "new_password": "nova-senha-123"}).status_code == 401
@@ -157,7 +163,7 @@ def test_character_limit(monkeypatch: pytest.MonkeyPatch) -> None:
     headers = auth(register("jose@example.com"))
     for n in range(2):
         assert client.put(f"/api/v1/sync/characters/char-limit-{n}0", headers=headers, json=character(f"char-limit-{n}0")).status_code == 200
-    assert client.put("/api/v1/sync/characters/char-limit-90", headers=headers, json=character("char-limit-90")).status_code == 409
+    assert client.put("/api/v1/sync/characters/char-limit-90", headers=headers, json=character("char-limit-90")).status_code == 403
 
 
 def test_delete_account_removes_everything() -> None:

@@ -144,6 +144,14 @@ describe('multiclasse: regras', () => {
     expect(loaded).toMatchObject({ multiclass: [], hpMode: 'average', hpRolls: {}, elementalAffinity: null })
   })
 
+  it('Defesa sem Armadura vem só da primeira classe que a concede', () => {
+    const scores = { STR: 10, DEX: 14, CON: 16, INT: 8, WIS: 10, CHA: 8 }
+    const monkFirst = derive(build({ classSlug: 'monk', multiclass: [extra('barbarian', 1)], baseScores: scores }), catalog)
+    expect(monkFirst.ac.value).toBe(10 + 2 + 0) // Sabedoria, mesmo com Constituição maior
+    const barbarianFirst = derive(build({ classSlug: 'barbarian', multiclass: [extra('monk', 1)], baseScores: scores }), catalog)
+    expect(barbarianFirst.ac.value).toBe(10 + 2 + 3)
+  })
+
   it('Ataque Extra de classes diferentes gera aviso', () => {
     const d = derive(build({ classSlug: 'fighter', level: 5, multiclass: [extra('paladin', 5)] }), catalog)
     expect(d.warnings.some((w) => w.includes('Ataque Extra'))).toBe(true)

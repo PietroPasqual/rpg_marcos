@@ -52,6 +52,17 @@ export function Builder({ catalog, id, step, go }: { catalog: Catalog; id: strin
     if (character) setSaveFailed(!saveCharacter(character))
   }, [character])
 
+  // A sincronização pode trazer uma versão mais nova desta ficha (ou excluí-la) enquanto ela está aberta:
+  // sem recarregar, a próxima edição gravaria a cópia antiga por cima da versão do outro aparelho.
+  useEffect(() => {
+    const onChanged = () => {
+      const stored = loadCharacters().find((c) => c.id === id) ?? null
+      setCharacter((prev) => (!stored ? null : !prev || stored.updatedAt > prev.updatedAt ? stored : prev))
+    }
+    window.addEventListener('characters-changed', onChanged)
+    return () => window.removeEventListener('characters-changed', onChanged)
+  }, [id])
+
   const derived = useMemo(() => (character ? derive(character, catalog) : null), [character, catalog])
   const issues = useMemo(() => (character ? validate(character, catalog) : []), [character, catalog])
 

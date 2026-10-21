@@ -71,7 +71,7 @@ describe('runSync', () => {
     expect(first).toMatchObject({ pushed: 2, pulled: 1 })
     expect(store.local.map((c) => c.id).sort()).toEqual(['a', 'b', 'c'])
     expect(store.remote.map((r) => r.id).sort()).toEqual(['a', 'b', 'c'])
-    expect(await runSync(deps)).toEqual({ pushed: 0, pulled: 0, removed: 0, conflicts: 0 })
+    expect(await runSync(deps)).toEqual({ pushed: 0, pulled: 0, removed: 0, conflicts: 0, failed: 0 })
   })
 
   it('propaga exclusões entre dois aparelhos', async () => {

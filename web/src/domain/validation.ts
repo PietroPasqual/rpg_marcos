@@ -39,7 +39,8 @@ export function validate(character: Character, catalog: Catalog): Issue[] {
   const add = (step: StepId, message: string, optional = false) => issues.push({ step, message, optional })
 
   // ---- Classe ----
-  const totals = Object.fromEntries(ABILITIES.map((a) => [a, computeScores(character, plan, look)[a].total])) as Record<(typeof ABILITIES)[number], number>
+  const computed = computeScores(character, plan, look)
+  const totals = Object.fromEntries(ABILITIES.map((a) => [a, computed[a].total])) as Record<(typeof ABILITIES)[number], number>
   const multi = plan.classes.length > 1
   if (!plan.cls) add('class', 'Escolha uma classe.')
   for (const cp of plan.classes) {
@@ -50,7 +51,7 @@ export function validate(character: Character, catalog: Catalog): Issue[] {
   }
   if (character.hpMode === 'manual') {
     for (const cp of plan.classes) {
-      const die = Number(cp.cls.hit_point_die.replace('d', ''))
+      const die = cp.hitDie
       for (let level = cp.index === 0 ? 2 : 1; level <= cp.level; level++) {
         const rolled = character.hpRolls[hpRollKey(cp.slug, level)]
         if (!(Number.isInteger(rolled) && rolled! >= 1 && rolled! <= die)) add('class', `Informe o dado de vida de ${cp.cls.name} no nível ${level} (1 a ${die}) ou use o valor médio.`, true)
