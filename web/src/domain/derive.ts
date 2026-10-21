@@ -3,8 +3,9 @@
 
 import type { Ability, ArmorData, Catalog, SpellData, WeaponData } from '../api/types'
 import type { Character, FeatPick } from './character'
+import { attackExtras, classLevel, extraResources, featureUses, type EffectContext } from './effects'
 import { featureLevels, buildPlan, type Plan } from './plan'
-import { lookup, type Lookup } from './lookup'
+import { lookup, slugify, type Lookup } from './lookup'
 import { ABILITIES, SKILLS, SKILL_BY_NAME } from './srd'
 
 export const abilityMod = (score: number): number => Math.floor((score - 10) / 2)
@@ -35,6 +36,8 @@ export interface AttackRow {
   properties: string[]
   mastery: string | null
   note: string | null
+  /** Dano extra e regras que dependem de classe e talentos (Fúria, Ataque Furtivo...). */
+  extras: string[]
 }
 
 export interface SpellEntry {
@@ -42,12 +45,24 @@ export interface SpellEntry {
   sources: string[]
   ability: Ability | null
   prepared: boolean
+  /** Bônus que se aplica a esta magia (ex.: Afinidade Elemental). */
+  note: string | null
+}
+
+export interface CasterInfo {
+  slug: string
+  name: string
+  ability: Ability
+  dc: number
+  attack: number
 }
 
 export interface SpellcastingInfo {
+  /** Conjurador principal (o primeiro da lista), para fichas de uma classe só. */
   ability: Ability | null
   dc: number | null
   attack: number | null
+  casters: CasterInfo[]
   slots: Record<number, number>
   pact: { count: number; level: number } | null
 }
@@ -57,6 +72,8 @@ export interface FeatureEntry {
   name: string
   level: number | null
   text: string
+  /** Usos por descanso, quando o texto da característica os define. */
+  uses: string | null
 }
 
 export interface Derived {
@@ -67,6 +84,8 @@ export interface Derived {
   skills: SkillRow[]
   hp: number
   hitDie: number
+  hitDice: string
+  defenses: string[]
   ac: { value: number; formula: string }
   initiative: number
   speed: number
@@ -164,7 +183,35 @@ export function isWeaponProficient(weapon: WeaponData, rule: WeaponRule): boolea
   return false
 }
 
+/** Proficiência com armas somando todas as classes (a da classe inicial e as ganhas por multiclasse). */
+export function weaponRuleForPlan(plan: Plan): WeaponRule {
+  const rules = plan.classes.map((c) => {
+    const base: WeaponRule = c.gains
+      ? { simple: false, martial: c.gains.martial ? 'all' : 'none', martialProperties: [] }
+      : weaponRuleFor(c.cls.weapon_proficiencies, null)
+    const order = weaponRuleFor([], c.picks.classOrder)
+    return order.martial === 'all' ? { ...base, martial: 'all' as const } : base
+  })
+  const properties = rules.flatMap((r) => (r.martial === 'properties' ? r.martialProperties : []))
+  return {
+    simple: rules.some((r) => r.simple),
+    martial: rules.some((r) => r.martial === 'all') ? 'all' : properties.length > 0 ? 'properties' : 'none',
+    martialProperties: [...new Set(properties)],
+  }
+}
+
 export type ArmorTier = 'Light' | 'Medium' | 'Heavy' | 'Shield'
+
+/** Treinamento com armaduras somando todas as classes. */
+export function armorTrainingForPlan(plan: Plan): Set<ArmorTier> {
+  const trained = new Set<ArmorTier>()
+  for (const c of plan.classes) {
+    const own = c.gains ? new Set(c.gains.armor) : armorTrainingFor(c.cls.armor_training, null)
+    own.forEach((t) => trained.add(t))
+    armorTrainingFor([], c.picks.classOrder).forEach((t) => trained.add(t))
+  }
+  return trained
+}
 
 export function armorTrainingFor(texts: string[], order: string | null): Set<ArmorTier> {
   const text = texts.join(' ')
@@ -183,7 +230,7 @@ const armorTier = (armor: ArmorData): ArmorTier => armor.category.replace(' Armo
 export function skillProficiencies(character: Character, plan: Plan): Set<string> {
   const skills = new Set<string>()
   plan.background?.skill_proficiencies.forEach((s) => skills.add(s))
-  character.classSkills.forEach((s) => skills.add(s))
+  plan.classes.forEach((c) => c.picks.classSkills.forEach((s) => skills.add(s)))
   if (character.speciesChoice.skill) skills.add(character.speciesChoice.skill)
   for (const pick of Object.values(character.feats)) {
     if (pick.slug === 'skilled') pick.skilled?.filter((s) => s in SKILL_BY_NAME).forEach((s) => skills.add(s))
@@ -210,6 +257,9 @@ function equippedArmor(character: Character, look: Lookup): { body: ArmorData | 
   return { body, shield }
 }
 
+/** Feiticeiro Dracônico com Resiliência Dracônica (subclasse no nível 3 da classe). */
+const isDraconic = (plan: Plan): boolean => plan.classes.some((c) => c.subclass?.slug === 'draconic-sorcery' && c.level >= 3)
+
 function computeAc(character: Character, plan: Plan, scores: Record<Ability, ScoreInfo>, look: Lookup) {
   const { body, shield } = equippedArmor(character, look)
   const dex = scores.DEX.mod
@@ -220,12 +270,9 @@ function computeAc(character: Character, plan: Plan, scores: Record<Ability, Sco
     options.push({ value: body.base_ac + dexPart, formula: `${body.name}${body.adds_dex_modifier ? ' + Destreza' : ''}` })
   } else {
     options.push({ value: 10 + dex, formula: '10 + Destreza' })
-    const slug = plan.cls?.slug
-    if (slug === 'barbarian') options.push({ value: 10 + dex + scores.CON.mod, formula: 'Defesa sem Armadura (10 + Des + Con)' })
-    if (slug === 'monk' && !shield) options.push({ value: 10 + dex + scores.WIS.mod, formula: 'Defesa sem Armadura (10 + Des + Sab)' })
-    if (plan.subclass?.slug === 'draconic-sorcery' && plan.level >= 3) {
-      options.push({ value: 10 + dex + scores.CHA.mod, formula: 'Resiliência Dracônica (10 + Des + Car)' })
-    }
+    if (classLevel(plan, 'barbarian') > 0) options.push({ value: 10 + dex + scores.CON.mod, formula: 'Defesa sem Armadura (10 + Des + Con)' })
+    if (classLevel(plan, 'monk') > 0 && !shield) options.push({ value: 10 + dex + scores.WIS.mod, formula: 'Defesa sem Armadura (10 + Des + Sab)' })
+    if (isDraconic(plan)) options.push({ value: 10 + dex + scores.CHA.mod, formula: 'Resiliência Dracônica (10 + Des + Car)' })
   }
 
   const best = options.reduce((a, b) => (b.value > a.value ? b : a))
@@ -250,9 +297,10 @@ function computeSpeed(character: Character, plan: Plan, scores: Record<Ability, 
 
   const { body, shield } = equippedArmor(character, look)
   const heavy = body ? armorTier(body) === 'Heavy' : false
-  if (plan.cls?.slug === 'barbarian' && plan.level >= 5 && !heavy) speed += 10
-  if (plan.cls?.slug === 'monk' && !body && !shield) {
-    const bonus = String(plan.row?.class_specific_columns.unarmored_movement ?? '').match(/\d+/)
+  if (classLevel(plan, 'barbarian') >= 5 && !heavy) speed += 10
+  const monk = plan.classes.find((c) => c.slug === 'monk')
+  if (monk && !body && !shield) {
+    const bonus = String(monk.row?.class_specific_columns.unarmored_movement ?? '').match(/\d+/)
     if (bonus) speed += Number(bonus[0])
   }
   if (body?.strength_requirement && scores.STR.total < body.strength_requirement) speed -= 10
@@ -263,17 +311,20 @@ function computeSpeed(character: Character, plan: Plan, scores: Record<Ability, 
 // Ataques
 // ---------------------------------------------------------------------------------------------
 
-function computeAttacks(character: Character, plan: Plan, scores: Record<Ability, ScoreInfo>, look: Lookup): AttackRow[] {
+function computeAttacks(character: Character, plan: Plan, scores: Record<Ability, ScoreInfo>, look: Lookup, ctx: EffectContext): AttackRow[] {
   const pb = plan.proficiencyBonus
-  const rule = weaponRuleFor(plan.cls?.weapon_proficiencies ?? [], character.classOrder)
-  const isMonk = plan.cls?.slug === 'monk'
+  const rule = weaponRuleForPlan(plan)
+  const monk = plan.classes.find((c) => c.slug === 'monk')
+  const isMonk = !!monk
+  const masteries = new Set(plan.classes.flatMap((c) => c.picks.masteries))
   const strMod = scores.STR.mod
   const dexMod = scores.DEX.mod
   const rows: AttackRow[] = []
 
   // Ataque desarmado (Monk usa Artes Marciais)
-  const martialArts = isMonk ? String(plan.row?.class_specific_columns.martial_arts ?? '1d6') : null
+  const martialArts = monk ? String(monk.row?.class_specific_columns.martial_arts ?? '1d6') : null
   const unarmedMod = isMonk ? Math.max(strMod, dexMod) : strMod
+  const unarmedAbility: Ability = unarmedMod === dexMod && isMonk && dexMod > strMod ? 'DEX' : 'STR'
   rows.push({
     id: 'unarmed',
     name: 'Unarmed Strike',
@@ -284,6 +335,7 @@ function computeAttacks(character: Character, plan: Plan, scores: Record<Ability
     properties: [],
     mastery: null,
     note: null,
+    extras: attackExtras(ctx, { melee: true, ranged: false, properties: [], ability: unarmedAbility, unarmed: true }),
   })
 
   for (const item of character.inventory) {
@@ -293,9 +345,17 @@ function computeAttacks(character: Character, plan: Plan, scores: Record<Ability
     const props = propertyNames(weapon)
     const monkWeapon = isMonk && weapon.range_type === 'Melee' && (weapon.category.startsWith('Simple') || props.includes('Light'))
     let mod: number
-    if (props.includes('Finesse') || monkWeapon) mod = Math.max(strMod, dexMod)
-    else if (weapon.range_type === 'Ranged') mod = dexMod
-    else mod = strMod
+    let ability: Ability
+    if (props.includes('Finesse') || monkWeapon) {
+      mod = Math.max(strMod, dexMod)
+      ability = dexMod > strMod ? 'DEX' : 'STR'
+    } else if (weapon.range_type === 'Ranged') {
+      mod = dexMod
+      ability = 'DEX'
+    } else {
+      mod = strMod
+      ability = 'STR'
+    }
     const proficient = isWeaponProficient(weapon, rule)
     const archery = weapon.range_type === 'Ranged' && hasFeat(character, 'archery') ? 2 : 0
     const dice = monkWeapon && martialArts && compareDice(martialArts, weapon.damage_dice) > 0 ? martialArts : weapon.damage_dice
@@ -313,8 +373,9 @@ function computeAttacks(character: Character, plan: Plan, scores: Record<Ability
       damage: withMod(dice, mod) + versatile,
       damageType: weapon.damage_type,
       properties: weapon.properties,
-      mastery: character.masteries.includes(weapon.slug) ? weapon.mastery_name : null,
+      mastery: masteries.has(weapon.slug) ? weapon.mastery_name : null,
       note: proficient ? null : 'Sem proficiência',
+      extras: attackExtras(ctx, { melee: weapon.range_type === 'Melee', ranged: weapon.range_type === 'Ranged', properties: props, ability, unarmed: false }),
     })
   }
   return rows
@@ -338,9 +399,8 @@ function compareDice(a: string, b: string): number {
 // Magias
 // ---------------------------------------------------------------------------------------------
 
-function collectSpells(character: Character, plan: Plan, look: Lookup): SpellEntry[] {
+function collectSpells(character: Character, plan: Plan, look: Lookup, scores: Record<Ability, ScoreInfo>): SpellEntry[] {
   const entries = new Map<string, SpellEntry>()
-  const classAbility = plan.casting.ability
   const add = (slug: string, source: string, ability: Ability | null, prepared: boolean) => {
     const spell = look.spells.get(slug)
     if (!spell) return
@@ -350,17 +410,23 @@ function collectSpells(character: Character, plan: Plan, look: Lookup): SpellEnt
       existing.prepared ||= prepared
       return
     }
-    entries.set(slug, { spell, sources: [source], ability, prepared })
+    entries.set(slug, { spell, sources: [source], ability, prepared, note: null })
   }
 
-  character.spells.cantrips.forEach((s) => add(s, 'Classe', classAbility, true))
-  character.styleCantrips.forEach((s) => add(s, plan.styleAlternative === 'blessed-warrior' ? 'Guerreiro Abençoado' : 'Guerreiro Druídico', classAbility, true))
-  character.spells.prepared.forEach((s) => add(s, 'Preparada', classAbility, true))
-  character.spells.spellbook.filter((s) => !character.spells.prepared.includes(s)).forEach((s) => add(s, 'Grimório', classAbility, false))
-  Object.values(character.spells.arcanum).forEach((s) => add(s, 'Arcana Mística', classAbility, true))
-
-  for (const row of plan.subclass?.always_prepared_spells ?? []) {
-    if (row.class_level <= plan.level) row.spell_slugs.forEach((s) => add(s, `Sempre preparada (${plan.subclass!.name})`, classAbility, true))
+  const multi = plan.classes.length > 1
+  for (const c of plan.classes) {
+    const ability = c.casting.ability
+    const own = (label: string) => (multi ? `${label} (${c.cls.name})` : label)
+    const spells = c.picks.spells
+    spells.cantrips.forEach((s) => add(s, own('Classe'), ability, true))
+    c.picks.styleCantrips.forEach((s) => add(s, c.styleAlternative === 'blessed-warrior' ? 'Guerreiro Abençoado' : 'Guerreiro Druídico', ability, true))
+    spells.prepared.forEach((s) => add(s, own('Preparada'), ability, true))
+    spells.spellbook.filter((s) => !spells.prepared.includes(s)).forEach((s) => add(s, 'Grimório', ability, false))
+    Object.values(spells.arcanum).forEach((s) => add(s, 'Arcana Mística', ability, true))
+    for (const row of c.subclass?.always_prepared_spells ?? []) {
+      if (row.class_level <= c.level) row.spell_slugs.forEach((s) => add(s, `Sempre preparada (${c.subclass!.name})`, ability, true))
+    }
+    if (c.slug === 'ranger') add('hunters-mark', 'Sempre preparada (Favored Enemy)', ability, true)
   }
 
   const lineage = plan.species?.lineages.find((l) => l.slug === character.speciesChoice.lineage)
@@ -375,6 +441,15 @@ function collectSpells(character: Character, plan: Plan, look: Lookup): SpellEnt
     if (spell) add(spell, 'Magic Initiate', ability, true)
   }
 
+  // Afinidade Elemental: soma o modificador de Carisma ao dano de uma rolagem de magias do tipo escolhido.
+  const affinity = character.elementalAffinity
+  if (affinity && plan.classes.some((c) => c.slug === 'sorcerer' && c.subclass?.slug === 'draconic-sorcery' && c.level >= 6)) {
+    const bonus = Math.max(0, scores.CHA.mod)
+    for (const entry of entries.values()) {
+      if (new RegExp(`\\b${affinity}\\b damage`, 'i').test(entry.spell.description)) entry.note = `Afinidade Elemental: +${bonus} em uma rolagem de dano (${affinity})`
+    }
+  }
+
   return [...entries.values()].sort((a, b) => a.spell.level - b.spell.level || a.spell.name.localeCompare(b.spell.name))
 }
 
@@ -382,32 +457,68 @@ function collectSpells(character: Character, plan: Plan, look: Lookup): SpellEnt
 // Características e recursos
 // ---------------------------------------------------------------------------------------------
 
-function collectFeatures(character: Character, plan: Plan, look: Lookup): FeatureEntry[] {
+function collectFeatures(character: Character, plan: Plan, look: Lookup, ctx: EffectContext): FeatureEntry[] {
   const features: FeatureEntry[] = []
-  for (const f of plan.cls?.features ?? []) {
-    if (f.level <= plan.level) features.push({ source: plan.cls!.name, name: f.name, level: f.level, text: f.description })
-  }
-  for (const f of plan.subclass?.features ?? []) {
-    if (f.level <= plan.level) features.push({ source: plan.subclass!.name, name: f.name, level: f.level, text: f.description })
+  const push = (source: string, name: string, level: number | null, text: string) => features.push({ source, name, level, text, uses: featureUses(text, ctx) })
+
+  for (const c of plan.classes) {
+    for (const f of c.cls.features) if (f.level <= c.level) push(c.cls.name, f.name, f.level, f.description)
+    for (const f of c.subclass?.features ?? []) if (f.level <= c.level) push(c.subclass!.name, f.name, f.level, f.description)
+    const order = c.orderOptions.find((o) => o.slug === c.picks.classOrder)
+    if (order && c.orderFeature) push(c.cls.name, `${c.orderFeature}: ${order.name}`, 1, order.text)
   }
   if (plan.species) {
     const lineage = plan.species.lineages.find((l) => l.slug === character.speciesChoice.lineage)
-    for (const t of plan.species.traits) features.push({ source: plan.species.name, name: t.name, level: null, text: t.description })
-    if (lineage) features.push({ source: plan.species.name, name: `${plan.species.lineage_table_title ?? 'Linhagem'}: ${lineage.name}`, level: null, text: lineage.description })
+    // Traço com tabela de opções (ex.: Giant Ancestry): os usos por descanso valem para a opção escolhida.
+    const parentTitle = plan.species.lineage_table_title
+    const parent = lineage ? plan.species.traits.find((t) => t.name === parentTitle) : undefined
+    for (const t of plan.species.traits) {
+      if (t === parent) features.push({ source: plan.species.name, name: t.name, level: null, text: t.description, uses: null })
+      else push(plan.species.name, t.name, null, t.description)
+    }
+    if (lineage) {
+      features.push({
+        source: plan.species.name,
+        name: `${parentTitle ?? 'Linhagem'}: ${lineage.name}`,
+        level: null,
+        text: lineage.description,
+        uses: parent ? featureUses(parent.description, ctx) : featureUses(lineage.description, ctx),
+      })
+    }
   }
   for (const slot of plan.featSlots) {
     const pick = character.feats[slot.key]
     const feat = pick?.slug ? look.feats.get(pick.slug) : null
     if (!feat) continue
     const text = [feat.description, ...feat.benefits.map((b) => `**${b.name}.** ${b.description}`)].filter(Boolean).join('\n\n')
-    features.push({ source: `Talento (${feat.category})`, name: feat.name, level: slot.level, text })
+    push(`Talento (${feat.category})`, feat.name, slot.level, text)
   }
-  const order = plan.orderOptions.find((o) => o.slug === character.classOrder)
-  if (order && plan.orderFeature) features.push({ source: plan.cls!.name, name: `${plan.orderFeature}: ${order.name}`, level: 1, text: order.text })
   return features
 }
 
 const prettify = (key: string): string => key.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
+
+// ---------------------------------------------------------------------------------------------
+// Pontos de vida
+// ---------------------------------------------------------------------------------------------
+
+export const hitDieAverage = (die: number): number => Math.floor(die / 2) + 1
+export const hpRollKey = (classSlug: string, level: number): string => `${classSlug}:${level}`
+
+/** Pontos de vida das classes: dado máximo no 1º nível, depois a média ou o resultado registrado, mais Constituição. */
+export function classHitPoints(character: Character, plan: Plan, conMod: number): number {
+  let hp = 0
+  plan.classes.forEach((c, classIndex) => {
+    const die = Number(c.cls.hit_point_die.replace('d', ''))
+    for (let level = 1; level <= c.level; level++) {
+      const rolled = character.hpRolls[hpRollKey(c.slug, level)]
+      const usesRoll = character.hpMode === 'manual' && Number.isInteger(rolled) && rolled! >= 1 && rolled! <= die
+      const gained = classIndex === 0 && level === 1 ? die : usesRoll ? rolled! : hitDieAverage(die)
+      hp += Math.max(1, gained + conMod)
+    }
+  })
+  return hp
+}
 
 // ---------------------------------------------------------------------------------------------
 // Derivação completa
@@ -419,30 +530,35 @@ export function derive(character: Character, catalog: Catalog): Derived {
   const pb = plan.proficiencyBonus
   const scores = computeScores(character, plan, look)
   const warnings: string[] = []
+  const mods = Object.fromEntries(ABILITIES.map((a) => [a, scores[a].mod])) as Record<Ability, number>
+  const ctx: EffectContext = { character, plan, mods, pb }
 
   // Perícias
   const proficient = skillProficiencies(character, plan)
-  const expertise = new Set(character.expertise.filter((s) => proficient.has(s)))
-  const jack = featureLevels(plan.cls, plan.level, 'Jack of All Trades').length > 0
+  const expertise = new Set(plan.classes.flatMap((c) => c.picks.expertise).filter((s) => proficient.has(s)))
+  const jack = plan.classes.some((c) => featureLevels(c.cls, c.level, 'Jack of All Trades').length > 0)
   const orderBonus = Math.max(1, scores.WIS.mod)
-  const orderSkills = character.classOrder === 'thaumaturge' ? ['Arcana', 'Religion'] : character.classOrder === 'magician' ? ['Arcana', 'Nature'] : []
+  const orders = plan.classes.map((c) => c.picks.classOrder)
+  const orderSkills = [...(orders.includes('thaumaturge') ? ['Arcana', 'Religion'] : []), ...(orders.includes('magician') ? ['Arcana', 'Nature'] : [])]
   const skills: SkillRow[] = SKILLS.map((s) => {
     const level: SkillRow['level'] = expertise.has(s.name) ? 'expertise' : proficient.has(s.name) ? 'proficient' : jack ? 'half' : 'none'
     const bonus = level === 'expertise' ? pb * 2 : level === 'proficient' ? pb : level === 'half' ? Math.floor(pb / 2) : 0
     return { name: s.name, label: s.label, ability: s.ability, level, mod: scores[s.ability].mod + bonus + (orderSkills.includes(s.name) ? orderBonus : 0) }
   })
 
-  // Salvaguardas
+  // Salvaguardas: só a classe inicial concede proficiência (regra de multiclasse)
   const saveProfs = new Set<Ability>(plan.cls?.saving_throw_proficiencies ?? [])
   const saves = ABILITIES.map((ability) => ({ ability, proficient: saveProfs.has(ability), mod: scores[ability].mod + (saveProfs.has(ability) ? pb : 0) }))
 
   // Pontos de vida
   const hitDie = Number(plan.cls?.hit_point_die.replace('d', '') ?? 8)
   const conMod = scores.CON.mod
-  let hp = plan.cls ? hitDie + conMod + (plan.level - 1) * (Math.floor(hitDie / 2) + 1 + conMod) : 0
+  let hp = plan.cls ? classHitPoints(character, plan, conMod) : 0
   if (plan.species?.traits.some((t) => t.name === 'Dwarven Toughness')) hp += plan.level
   if (hasFeat(character, 'tough')) hp += 2 * plan.level
-  if (plan.subclass?.slug === 'draconic-sorcery' && plan.level >= 3) hp += plan.level
+  const draconic = plan.classes.find((c) => c.slug === 'sorcerer' && c.subclass?.slug === 'draconic-sorcery' && c.level >= 3)
+  if (draconic) hp += draconic.level
+  const hitDice = plan.hitDice.map((d) => `${d.count}d${d.die}`).join(' + ')
 
   // CA, velocidade, iniciativa
   const ac = computeAc(character, plan, scores, look)
@@ -458,11 +574,20 @@ export function derive(character: Character, catalog: Catalog): Derived {
   const darkvision = lineageDark ? Number(lineageDark[1]) : (plan.species?.darkvision_ft ?? null)
 
   // Proficiências de equipamento
-  const trained = armorTrainingFor(plan.cls?.armor_training ?? [], character.classOrder)
-  const weaponsText = plan.cls?.weapon_proficiencies.slice() ?? []
-  if (character.classOrder === 'protector' || character.classOrder === 'warden') weaponsText.push('Martial weapons (Ordem)')
-  const tools: string[] = [...(plan.cls?.tool_proficiencies.filter((t) => !t.toLowerCase().startsWith('choose')) ?? [])]
-  for (const slug of character.classTools) tools.push(look.tools.get(slug)?.name ?? slug)
+  const trained = armorTrainingForPlan(plan)
+  const weaponsText: string[] = []
+  const tools: string[] = []
+  for (const c of plan.classes) {
+    if (c.gains) {
+      if (c.gains.martial) weaponsText.push(`Martial weapons (${c.cls.name})`)
+      c.gains.toolNames.forEach((name) => tools.push(look.tools.get(slugify(name))?.name ?? name))
+    } else {
+      weaponsText.push(...c.cls.weapon_proficiencies)
+      tools.push(...c.cls.tool_proficiencies.filter((t) => !t.toLowerCase().startsWith('choose')))
+    }
+    for (const slug of c.picks.classTools) tools.push(look.tools.get(slug)?.name ?? slug)
+    if (c.picks.classOrder === 'protector' || c.picks.classOrder === 'warden') weaponsText.push('Martial weapons (Ordem)')
+  }
   if (plan.background) {
     const bgTool = plan.background.tool_slug ?? character.backgroundTool
     if (bgTool) tools.push(look.tools.get(bgTool)?.name ?? plan.background.tool_proficiency)
@@ -480,6 +605,9 @@ export function derive(character: Character, catalog: Catalog): Derived {
     warnings.push(`${body.name} exige Força ${body.strength_requirement}: Velocidade reduzida em 10 ft.`)
   }
   if (body?.stealth_disadvantage) warnings.push(`${body.name} impõe Desvantagem em testes de Furtividade (Stealth).`)
+  if (plan.classes.filter((c) => featureLevels(c.cls, c.level, 'Extra Attack').length > 0).length > 1) {
+    warnings.push('Ataque Extra de classes diferentes não se acumula: você faz no máximo um ataque extra por ação de Atacar (o de Guerreiro nível 11 e 20 é exceção).')
+  }
 
   // Equipamento: peso e ouro
   let weight = 0
@@ -491,15 +619,32 @@ export function derive(character: Character, catalog: Catalog): Derived {
   const classGold = plan.cls?.starting_equipment_options.find((o) => o.option_label === character.classEquipment)?.gold_gp ?? 0
   const bgGold = plan.background?.equipment_options.find((o) => o.option_label === character.backgroundEquipment)?.gold_gp ?? 0
 
-  const casting = plan.casting
-  const spellMod = casting.ability ? scores[casting.ability].mod : null
-  const spellcasting: SpellcastingInfo | null = plan.row?.spellcasting
-    ? { ability: casting.ability, dc: spellMod === null ? null : 8 + pb + spellMod, attack: spellMod === null ? null : pb + spellMod, slots: casting.slots, pact: casting.pact }
-    : null
+  // Conjuração: um conjurador por classe, espaços combinados
+  const casters: CasterInfo[] = plan.classes
+    .filter((c) => c.row?.spellcasting && c.casting.ability)
+    .map((c) => ({ slug: c.slug, name: c.cls.name, ability: c.casting.ability!, dc: 8 + pb + scores[c.casting.ability!].mod, attack: pb + scores[c.casting.ability!].mod }))
+  const spellcasting: SpellcastingInfo | null =
+    casters.length > 0
+      ? { ability: casters[0]!.ability, dc: casters[0]!.dc, attack: casters[0]!.attack, casters, slots: plan.spellSlots, pact: plan.pactSlots }
+      : null
 
-  const resources = Object.entries(plan.row?.class_specific_columns ?? {})
-    .filter(([key]) => key !== 'eldritch_invocations')
-    .map(([key, value]) => ({ label: prettify(key), value: String(value) }))
+  const multi = plan.classes.length > 1
+  const resources = [
+    ...plan.classes.flatMap((c) =>
+      Object.entries(c.row?.class_specific_columns ?? {})
+        .filter(([key]) => key !== 'eldritch_invocations')
+        .map(([key, value]) => ({ label: multi ? `${prettify(key)} (${c.cls.name})` : prettify(key), value: String(value) })),
+    ),
+    ...extraResources(ctx),
+  ]
+
+  const features = collectFeatures(character, plan, look, ctx)
+  for (const f of features) if (f.uses && !resources.some((r) => r.label === f.name)) resources.push({ label: f.name, value: f.uses })
+
+  const defenses: string[] = []
+  if (character.elementalAffinity && plan.classes.some((c) => c.slug === 'sorcerer' && c.subclass?.slug === 'draconic-sorcery' && c.level >= 6)) {
+    defenses.push(`Resistência a dano ${character.elementalAffinity} (Afinidade Elemental)`)
+  }
 
   return {
     plan,
@@ -509,17 +654,19 @@ export function derive(character: Character, catalog: Catalog): Derived {
     skills,
     hp,
     hitDie,
+    hitDice,
+    defenses,
     ac,
     initiative,
     speed,
     darkvision,
     passivePerception: 10 + perception,
-    attacks: computeAttacks(character, plan, scores, look),
+    attacks: computeAttacks(character, plan, scores, look, ctx),
     spellcasting,
-    spells: collectSpells(character, plan, look),
+    spells: collectSpells(character, plan, look, scores),
     proficiencies: { armor: armorLabels, weapons: weaponsText, tools },
     languages: ['Common', ...character.languages],
-    features: collectFeatures(character, plan, look),
+    features,
     resources,
     carryCapacity: scores.STR.total * 15,
     weightCarried: Math.round(weight * 10) / 10,

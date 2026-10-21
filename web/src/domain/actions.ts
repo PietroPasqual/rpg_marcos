@@ -1,38 +1,68 @@
 // Mudanças de alto nível na ficha. Cada função devolve um novo personagem; o app aplica `prune` em seguida.
 
 import type { Ability, Catalog } from '../api/types'
-import type { Character, FeatPick } from './character'
+import { emptyPicks, featKey, totalLevel, type Character, type FeatPick } from './character'
 import { applyEquipmentOption } from './equipment'
 import { lookup } from './lookup'
 import { MAX_LEVEL } from './srd'
 
-const CLASS_SLOT_PREFIXES = ['fighting-style', 'asi-', 'epic-']
+const CLASS_SLOT_BASES = ['fighting-style', 'asi-', 'epic-']
 
+/** Remove os talentos de classe do dono indicado (null = classe inicial). */
+function withoutClassFeats(feats: Character['feats'], owner: string | null): Character['feats'] {
+  return Object.fromEntries(
+    Object.entries(feats).filter(([key]) => {
+      if (owner === null) return !CLASS_SLOT_BASES.some((base) => key.startsWith(base))
+      return !CLASS_SLOT_BASES.some((base) => key.startsWith(featKey(owner, base)))
+    }),
+  )
+}
+
+/** Troca a classe inicial. Se a nova já era uma classe adicional, ela deixa de ser adicional. */
 export function selectClass(character: Character, slug: string, catalog: Catalog): Character {
   if (character.classSlug === slug) return character
-  const feats = Object.fromEntries(Object.entries(character.feats).filter(([key]) => !CLASS_SLOT_PREFIXES.some((p) => key.startsWith(p))))
+  const multiclass = character.multiclass.filter((c) => c.slug !== slug)
   const next: Character = {
     ...character,
     classSlug: slug,
-    subclassSlug: null,
-    classSkills: [],
-    classTools: [],
-    expertise: [],
-    classOrder: null,
-    styleOption: 'feat',
-    styleCantrips: [],
-    masteries: [],
-    invocations: [],
-    metamagic: [],
-    feats,
-    spells: { cantrips: [], spellbook: [], prepared: [], arcanum: {} },
+    multiclass,
+    feats: withoutClassFeats(character.feats, null),
+    ...emptyPicks(),
+    hpRolls: {},
+    elementalAffinity: null,
   }
   return applyEquipmentOption(next, catalog, 'class', null)
 }
 
-export function setLevel(character: Character, level: number): Character {
-  return { ...character, level: Math.min(MAX_LEVEL, Math.max(1, Math.round(level) || 1)) }
+/** Define o nível na classe de índice `index`, mantendo o nível total entre 1 e 20. */
+export function setClassLevel(character: Character, index: number, level: number): Character {
+  const others = totalLevel(character) - (index === 0 ? character.level : (character.multiclass[index - 1]?.level ?? 0))
+  const clamped = Math.min(MAX_LEVEL - others, Math.max(1, Math.round(level) || 1))
+  if (index === 0) return { ...character, level: clamped }
+  return { ...character, multiclass: character.multiclass.map((c, i) => (i === index - 1 ? { ...c, level: clamped } : c)) }
 }
+
+export const setLevel = (character: Character, level: number): Character => setClassLevel(character, 0, level)
+
+/** Adiciona uma classe (multiclasse) no nível 1, se couber no limite de 20 níveis. */
+export function addClass(character: Character, slug: string): Character {
+  if (!character.classSlug || character.classSlug === slug || character.multiclass.some((c) => c.slug === slug)) return character
+  if (totalLevel(character) >= MAX_LEVEL) return character
+  return { ...character, multiclass: [...character.multiclass, { slug, level: 1, ...emptyPicks() }] }
+}
+
+export function removeClass(character: Character, index: number): Character {
+  const removed = character.multiclass[index - 1]
+  if (index < 1 || !removed) return character
+  const hpRolls = Object.fromEntries(Object.entries(character.hpRolls).filter(([key]) => !key.startsWith(`${removed.slug}:`)))
+  return {
+    ...character,
+    multiclass: character.multiclass.filter((_, i) => i !== index - 1),
+    feats: withoutClassFeats(character.feats, removed.slug),
+    hpRolls,
+  }
+}
+
 
 export function selectSpecies(character: Character, slug: string, catalog: Catalog): Character {
   if (character.speciesSlug === slug) return character

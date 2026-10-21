@@ -2,9 +2,10 @@
 // Serve de atalho para fichas rápidas e como teste de estresse das regras (toda combinação deve poder ficar completa).
 
 import type { Ability, Catalog } from '../api/types'
-import { selectBackground, selectClass, selectSpecies, suggestedStandardArray } from './actions'
-import type { Character, FeatPick } from './character'
-import { isWeaponProficient, skillProficiencies, weaponRuleFor } from './derive'
+import { addClass, selectBackground, selectClass, selectSpecies, setClassLevel, suggestedStandardArray } from './actions'
+import { picksOf, withPicks, type Character, type FeatPick } from './character'
+import { isWeaponProficient, skillProficiencies, weaponRuleForPlan } from './derive'
+import { ELEMENTAL_AFFINITY_TYPES } from './effects'
 import { applyEquipmentOption, resolveChoice } from './equipment'
 import { fixedMagicInitiateList, featsForSlot } from './feats'
 import { lookup } from './lookup'
@@ -19,6 +20,8 @@ export interface AutofillDefaults {
   classSlug?: string
   speciesSlug?: string
   backgroundSlug?: string
+  /** Classes adicionais (multiclasse) e o nível em cada uma, aplicadas só se a ficha ainda não tiver nenhuma. */
+  extraClasses?: { slug: string; level: number }[]
 }
 
 export function autofill(input: Character, catalog: Catalog, defaults: AutofillDefaults = {}): Character {
@@ -33,10 +36,21 @@ export function autofill(input: Character, catalog: Catalog, defaults: AutofillD
   if (!c.speciesSlug) step((x) => selectSpecies(x, defaults.speciesSlug ?? 'human', catalog))
   if (!c.backgroundSlug) step((x) => selectBackground(x, defaults.backgroundSlug ?? 'soldier', catalog))
 
+  if (c.multiclass.length === 0 && defaults.extraClasses?.length) {
+    for (const extra of defaults.extraClasses) {
+      step((x) => addClass(x, extra.slug))
+      const index = c.multiclass.findIndex((m) => m.slug === extra.slug) + 1
+      if (index > 0) step((x) => setClassLevel(x, index, extra.level))
+    }
+  }
+
   // Subclasse e espécie
   step((x) => {
-    const p = buildPlan(x, catalog)
-    return p.needsSubclass && !p.subclass ? { ...x, subclassSlug: p.subclassOptions[0]!.slug } : x
+    let y = x
+    for (const cp of buildPlan(x, catalog).classes) {
+      if (cp.needsSubclass && !cp.subclass) y = withPicks(y, cp.index, { subclassSlug: cp.subclassOptions[0]!.slug })
+    }
+    return y
   })
   step((x) => {
     const p = buildPlan(x, catalog)
@@ -52,7 +66,7 @@ export function autofill(input: Character, catalog: Catalog, defaults: AutofillD
   step((x) => {
     const p = buildPlan(x, catalog)
     const bg = p.background!
-    const primary = p.cls?.primary_abilities ?? []
+    const primary = p.classes.flatMap((cp) => cp.cls.primary_abilities)
     const ordered = [...bg.ability_scores.filter((a) => primary.includes(a)), ...bg.ability_scores.filter((a) => !primary.includes(a))]
     const asi = x.backgroundAsi
     return {
@@ -61,40 +75,53 @@ export function autofill(input: Character, catalog: Catalog, defaults: AutofillD
       backgroundTool: x.backgroundTool ?? bg.tool_choose_from[0] ?? null,
     }
   })
-  step((x) => (ABILITIES.some((a) => x.baseScores[a] === null) ? { ...x, abilityMethod: 'standard', baseScores: suggestedStandardArray(plan().cls?.primary_abilities ?? []) } : x))
+  step((x) => {
+    if (!ABILITIES.some((a) => x.baseScores[a] === null)) return x
+    const primary = [...new Set(plan().classes.flatMap((cp) => cp.cls.primary_abilities))]
+    // Mais de três atributos primários não cabem na Matriz Padrão com 13 ou mais: usa valores manuais.
+    if (primary.length > 3) return { ...x, abilityMethod: 'manual', baseScores: Object.fromEntries(ABILITIES.map((a) => [a, primary.includes(a) ? 14 : 10])) as Character['baseScores'] }
+    return { ...x, abilityMethod: 'standard', baseScores: suggestedStandardArray(primary) }
+  })
 
-  // Ordem e perícias de classe
-  step((x) => ({ ...x, classOrder: x.classOrder ?? plan().orderOptions[0]?.slug ?? null }))
+  // Ordem, perícias e ferramentas de cada classe
+  step((x) => {
+    let y = x
+    for (const cp of buildPlan(x, catalog).classes) y = withPicks(y, cp.index, { classOrder: picksOf(y, cp.index).classOrder ?? cp.orderOptions[0]?.slug ?? null })
+    return y
+  })
   step((x) => {
     const p = buildPlan(x, catalog)
-    const granted = [...(p.background?.skill_proficiencies ?? []), ...(x.speciesChoice.skill ? [x.speciesChoice.skill] : [])]
-    const options = SKILLS.map((s) => s.name).filter((s) => p.classSkillOptions.includes(s) && !granted.includes(s))
-    const toolCount = p.toolChoices.reduce((sum, t) => sum + t.count, 0)
-    return {
-      ...x,
-      classSkills: take(options, p.classSkillCount, x.classSkills),
-      classTools: take(p.toolChoices[0]?.choose_from ?? [], toolCount, x.classTools),
-      languages: take(STANDARD_LANGUAGES, p.languageCount, x.languages),
+    const taken = [...(p.background?.skill_proficiencies ?? []), ...(x.speciesChoice.skill ? [x.speciesChoice.skill] : [])]
+    let y = x
+    for (const cp of p.classes) {
+      const picks = picksOf(y, cp.index)
+      const options = SKILLS.map((s) => s.name).filter((s) => cp.skillOptions.includes(s) && !taken.includes(s))
+      const skills = take(options, cp.skillCount, picks.classSkills)
+      taken.push(...skills)
+      const toolCount = cp.toolChoices.reduce((sum, t) => sum + t.count, 0)
+      y = withPicks(y, cp.index, { classSkills: skills, classTools: take(cp.toolChoices[0]?.choose_from ?? [], toolCount, picks.classTools) })
     }
+    return { ...y, languages: take(STANDARD_LANGUAGES, p.languageCount, y.languages) }
   })
 
   // Talentos
   step((x) => {
     const p = buildPlan(x, catalog)
     const primary = p.cls?.primary_abilities[0] ?? 'STR'
-    const casting: Ability = p.casting.ability ?? 'INT'
+    const casting: Ability = p.classes.find((cp) => cp.casting.ability)?.casting.ability ?? 'INT'
     const feats: Record<string, FeatPick> = { ...x.feats }
     const used = new Set(Object.values(feats).map((f) => f.slug))
     const proficient = skillProficiencies(x, p)
 
     for (const slot of p.featSlots) {
-      const isAltStyle = slot.key === 'fighting-style' && p.styleAlternative && x.styleOption === p.styleAlternative
+      const owner = p.classes.find((cp) => cp.slug === (slot.classSlug ?? p.classes[0]?.slug))
+      const isAltStyle = slot.base === 'fighting-style' && owner?.styleAlternative && owner.picks.styleOption === owner.styleAlternative
       if (isAltStyle) continue
       let pick = feats[slot.key]
       if (!pick?.slug) {
         let slug = slot.fixedSlug
         if (!slug) {
-          const eligible = featsForSlot(slot, catalog.feats, x.level)
+          const eligible = featsForSlot(slot, catalog.feats, p.level)
           const preferred = slot.category === 'General' ? eligible.find((f) => f.slug === 'ability-score-improvement') : undefined
           slug = (preferred ?? eligible.find((f) => !used.has(f.slug) || f.repeatable) ?? eligible[0])!.slug
         }
@@ -130,42 +157,57 @@ export function autofill(input: Character, catalog: Catalog, defaults: AutofillD
   step((x) => {
     const p = buildPlan(x, catalog)
     const known = skillProficiencies(x, p)
-    const proficient = SKILLS.map((s) => s.name).filter((s) => known.has(s) && (!p.expertise.restrictTo || p.expertise.restrictTo.includes(s)))
-    return { ...x, expertise: take(proficient, p.expertise.count, x.expertise) }
-  })
-
-  // Estilo de luta alternativo, maestrias, invocações, metamagia
-  step((x) => {
-    const p = buildPlan(x, catalog)
-    const rule = weaponRuleFor(p.cls?.weapon_proficiencies ?? [], x.classOrder)
-    const weapons = catalog.weapons.filter((w) => (p.cls?.slug === 'barbarian' ? w.range_type === 'Melee' : true) && isWeaponProficient(w, rule)).map((w) => w.slug)
-    const options = (category: string) => catalog.featureOptions.filter((o) => o.parent_class_slug === p.cls?.slug && o.category === category && o.level_prerequisite <= x.level).map((o) => o.slug)
-    return {
-      ...x,
-      masteries: take(weapons, p.masteryCount, x.masteries),
-      invocations: take(options('Eldritch Invocation'), p.invocationCount, x.invocations),
-      metamagic: take(options('Metamagic'), p.metamagicCount, x.metamagic),
+    const used: string[] = []
+    let y = x
+    for (const cp of p.classes) {
+      const picks = picksOf(y, cp.index)
+      const eligible = SKILLS.map((s) => s.name).filter((s) => known.has(s) && !used.includes(s) && (!cp.expertise.restrictTo || cp.expertise.restrictTo.includes(s)))
+      const expertise = take(eligible, cp.expertise.count, picks.expertise)
+      used.push(...expertise)
+      y = withPicks(y, cp.index, { expertise })
     }
+    return y
   })
 
-  // Magias
+  // Maestrias, invocações, metamagia e Afinidade Elemental
   step((x) => {
     const p = buildPlan(x, catalog)
-    const pools = spellPools(x, p, catalog)
+    const rule = weaponRuleForPlan(p)
+    let y = x
+    for (const cp of p.classes) {
+      const picks = picksOf(y, cp.index)
+      const weapons = catalog.weapons.filter((w) => (cp.slug === 'barbarian' ? w.range_type === 'Melee' : true) && isWeaponProficient(w, rule)).map((w) => w.slug)
+      const options = (category: string) => catalog.featureOptions.filter((o) => o.parent_class_slug === cp.slug && o.category === category && o.level_prerequisite <= cp.level).map((o) => o.slug)
+      y = withPicks(y, cp.index, {
+        masteries: take(weapons, cp.masteryCount, picks.masteries),
+        invocations: take(options('Eldritch Invocation'), cp.invocationCount, picks.invocations),
+        metamagic: take(options('Metamagic'), cp.metamagicCount, picks.metamagic),
+      })
+    }
+    return { ...y, elementalAffinity: y.elementalAffinity ?? ELEMENTAL_AFFINITY_TYPES[0]! }
+  })
+
+  // Magias de cada classe
+  step((x) => {
+    const p = buildPlan(x, catalog)
     const slugs = (list: { slug: string }[]) => list.map((s) => s.slug)
-    const spellbook = take(slugs(pools.spellbook), p.casting.spellbook, x.spells.spellbook)
-    const draft = { ...x, spells: { ...x.spells, spellbook } }
-    const prepPool = slugs(spellPools(draft, p, catalog).prepared)
-    return {
-      ...x,
-      styleCantrips: take(slugs(pools.style), p.casting.styleCantrips, x.styleCantrips),
-      spells: {
-        cantrips: take(slugs(pools.cantrips), p.casting.cantrips, x.spells.cantrips),
-        spellbook,
-        prepared: take(prepPool, p.casting.prepared, x.spells.prepared),
-        arcanum: Object.fromEntries(p.casting.arcanumLevels.map((lvl) => [String(lvl), x.spells.arcanum[String(lvl)] || (pools.arcanum[lvl]?.[0]?.slug ?? '')])),
-      },
+    let y = x
+    for (const cp of p.classes) {
+      const picks = picksOf(y, cp.index)
+      const pools = spellPools(picks, cp, catalog)
+      const spellbook = take(slugs(pools.spellbook), cp.casting.spellbook, picks.spells.spellbook)
+      const prepPool = slugs(spellPools({ ...picks, spells: { ...picks.spells, spellbook } }, cp, catalog).prepared)
+      y = withPicks(y, cp.index, {
+        styleCantrips: take(slugs(pools.style), cp.casting.styleCantrips, picks.styleCantrips),
+        spells: {
+          cantrips: take(slugs(pools.cantrips), cp.casting.cantrips, picks.spells.cantrips),
+          spellbook,
+          prepared: take(prepPool, cp.casting.prepared, picks.spells.prepared),
+          arcanum: Object.fromEntries(cp.casting.arcanumLevels.map((lvl) => [String(lvl), picks.spells.arcanum[String(lvl)] || (pools.arcanum[lvl]?.[0]?.slug ?? '')])),
+        },
+      })
     }
+    return y
   })
 
   // Equipamento

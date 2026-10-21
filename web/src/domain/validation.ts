@@ -1,10 +1,11 @@
 // Lista o que ainda falta decidir em cada etapa do assistente.
 
 import type { Catalog } from '../api/types'
-import type { Character } from './character'
-import { computeScores } from './derive'
+import { picksOf, type Character } from './character'
+import { computeScores, hpRollKey } from './derive'
 import { featPickIssues, fixedMagicInitiateList, unmetPrerequisite } from './feats'
 import { lookup } from './lookup'
+import { meetsPrimary, primaryRequirement } from './multiclass'
 import { buildPlan } from './plan'
 import { ABILITIES, POINT_BUY_BUDGET, POINT_BUY_COST, STANDARD_ARRAY } from './srd'
 
@@ -38,8 +39,24 @@ export function validate(character: Character, catalog: Catalog): Issue[] {
   const add = (step: StepId, message: string, optional = false) => issues.push({ step, message, optional })
 
   // ---- Classe ----
+  const totals = Object.fromEntries(ABILITIES.map((a) => [a, computeScores(character, plan, look)[a].total])) as Record<(typeof ABILITIES)[number], number>
+  const multi = plan.classes.length > 1
   if (!plan.cls) add('class', 'Escolha uma classe.')
-  if (plan.needsSubclass && !plan.subclass) add('class', `Escolha a subclasse (disponível a partir do nível ${plan.cls?.subclass_unlock_level}).`)
+  for (const cp of plan.classes) {
+    const who = multi ? ` de ${cp.cls.name}` : ''
+    if (cp.needsSubclass && !cp.subclass) add('class', `Escolha a subclasse${who} (disponível a partir do nível ${cp.cls.subclass_unlock_level}).`)
+    // Multiclasse: 13 no atributo primário da classe inicial e das demais
+    if (multi && !meetsPrimary(cp.cls, totals)) add('class', `Multiclasse: ${cp.cls.name} exige ${primaryRequirement(cp.cls)} (os atributos primários de todas as suas classes precisam de 13 ou mais).`)
+  }
+  if (character.hpMode === 'manual') {
+    for (const cp of plan.classes) {
+      const die = Number(cp.cls.hit_point_die.replace('d', ''))
+      for (let level = cp.index === 0 ? 2 : 1; level <= cp.level; level++) {
+        const rolled = character.hpRolls[hpRollKey(cp.slug, level)]
+        if (!(Number.isInteger(rolled) && rolled! >= 1 && rolled! <= die)) add('class', `Informe o dado de vida de ${cp.cls.name} no nível ${level} (1 a ${die}) ou use o valor médio.`, true)
+      }
+    }
+  }
 
   // ---- Origem ----
   const { species, background, speciesNeeds: needs } = plan
@@ -79,21 +96,27 @@ export function validate(character: Character, catalog: Catalog): Issue[] {
       if (current < needed) add('choices', `Escolha ${needed - current} ${text}.`)
       else if (current > needed) add('choices', `Há ${current - needed} ${text} a mais que o permitido.`)
     }
-    exact(character.classSkills.length, plan.classSkillCount, 'perícia(s) de classe')
-    for (const choice of plan.toolChoices) exact(character.classTools.length, choice.count, 'ferramenta(s) de classe')
-    if (plan.expertise.count > 0) exact(character.expertise.length, plan.expertise.count, 'especialização(ões)')
+    for (const cp of plan.classes) {
+      const picks = picksOf(character, cp.index)
+      const of = multi ? ` (${cp.cls.name})` : ''
+      exact(picks.classSkills.length, cp.skillCount, `perícia(s) de classe${of}`)
+      for (const choice of cp.toolChoices) exact(picks.classTools.length, choice.count, `ferramenta(s) de classe${of}`)
+      if (cp.expertise.count > 0) exact(picks.expertise.length, cp.expertise.count, `especialização(ões)${of}`)
+      if (cp.orderOptions.length > 0 && !picks.classOrder) add('choices', `Escolha ${cp.orderFeature}${of}.`)
+      if (cp.masteryCount > 0) exact(picks.masteries.length, cp.masteryCount, `maestria(s) de arma${of}`)
+      if (cp.invocationCount > 0) exact(picks.invocations.length, cp.invocationCount, `invocação(ões) mística(s)${of}`)
+      if (cp.metamagicCount > 0) exact(picks.metamagic.length, cp.metamagicCount, `opção(ões) de Metamagia${of}`)
+      if (cp.casting.styleCantrips > 0) exact(picks.styleCantrips.length, cp.casting.styleCantrips, `truque(s) do estilo de luta${of}`)
+    }
     exact(character.languages.length, plan.languageCount, 'idioma(s)')
-    if (plan.orderOptions.length > 0 && !character.classOrder) add('choices', `Escolha ${plan.orderFeature}.`)
-    if (plan.masteryCount > 0) exact(character.masteries.length, plan.masteryCount, 'maestria(s) de arma')
-    if (plan.invocationCount > 0) exact(character.invocations.length, plan.invocationCount, 'invocação(ões) mística(s)')
-    if (plan.metamagicCount > 0) exact(character.metamagic.length, plan.metamagicCount, 'opção(ões) de Metamagia')
-    if (plan.casting.styleCantrips > 0) exact(character.styleCantrips.length, plan.casting.styleCantrips, 'truque(s) do estilo de luta')
+    const affinityClass = plan.classes.find((c) => c.slug === 'sorcerer' && c.subclass?.slug === 'draconic-sorcery' && c.level >= 6)
+    if (affinityClass && !character.elementalAffinity) add('choices', 'Escolha o tipo de dano da Afinidade Elemental.')
 
-    const totals = Object.fromEntries(ABILITIES.map((a) => [a, computeScores(character, plan, look)[a].total])) as Record<(typeof ABILITIES)[number], number>
     const used = new Map<string, number>()
     for (const slot of plan.featSlots) {
       const pick = character.feats[slot.key]
-      const isStyleAlt = slot.key === 'fighting-style' && plan.styleAlternative && character.styleOption === plan.styleAlternative
+      const owner = plan.classes.find((c) => c.slug === (slot.classSlug ?? plan.classes[0]?.slug))
+      const isStyleAlt = slot.base === 'fighting-style' && owner?.styleAlternative && owner.picks.styleOption === owner.styleAlternative
       if (isStyleAlt) continue
       if (!slot.fixedSlug && !pick?.slug) {
         add('choices', `${slot.label}: escolha um talento.`)
@@ -112,15 +135,18 @@ export function validate(character: Character, catalog: Catalog): Issue[] {
   }
 
   // ---- Magias ----
-  const casting = plan.casting
-  if (plan.cls && plan.row?.spellcasting) {
+  for (const cp of plan.classes) {
+    if (!cp.row?.spellcasting) continue
+    const picks = picksOf(character, cp.index)
+    const casting = cp.casting
+    const of = multi ? ` (${cp.cls.name})` : ''
     const exact = (current: number, needed: number, text: string) => {
-      if (current !== needed) add('spells', `${text}: ${current} de ${needed}.`)
+      if (current !== needed) add('spells', `${text}${of}: ${current} de ${needed}.`)
     }
-    if (casting.cantrips > 0) exact(character.spells.cantrips.length, casting.cantrips, 'Truques da classe')
-    if (casting.spellbook > 0) exact(character.spells.spellbook.length, casting.spellbook, 'Magias no grimório')
-    if (casting.prepared > 0) exact(character.spells.prepared.length, casting.prepared, 'Magias preparadas')
-    for (const lvl of casting.arcanumLevels) if (!character.spells.arcanum[String(lvl)]) add('spells', `Escolha a Arcana Mística de nível ${lvl}.`)
+    if (casting.cantrips > 0) exact(picks.spells.cantrips.length, casting.cantrips, 'Truques da classe')
+    if (casting.spellbook > 0) exact(picks.spells.spellbook.length, casting.spellbook, 'Magias no grimório')
+    if (casting.prepared > 0) exact(picks.spells.prepared.length, casting.prepared, 'Magias preparadas')
+    for (const lvl of casting.arcanumLevels) if (!picks.spells.arcanum[String(lvl)]) add('spells', `Escolha a Arcana Mística de nível ${lvl}${of}.`)
   }
 
   // ---- Equipamento ----

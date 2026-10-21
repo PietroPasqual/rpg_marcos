@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react'
+import { describeClasses } from '../domain/multiclass'
 import type { Catalog } from '../api/types'
 import { newCharacter, type Character } from '../domain/character'
 import { deleteCharacter, downloadCharacter, duplicateCharacter, importCharacterFile, loadCharacters, saveCharacter } from '../state/store'
@@ -29,9 +30,8 @@ export function Home({ catalog, go }: { catalog: Catalog; go: (path: string) => 
   }
 
   const summary = (c: Character) => {
-    const cls = catalog.classes.find((k) => k.slug === c.classSlug)
     const species = catalog.species.find((s) => s.slug === c.speciesSlug)
-    return [cls ? `${cls.name} ${c.level}` : 'Sem classe', species?.name].filter(Boolean).join(' · ')
+    return [describeClasses(c, catalog.classes), species?.name].filter(Boolean).join(' · ')
   }
 
   return (

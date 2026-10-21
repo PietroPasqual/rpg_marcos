@@ -25,7 +25,7 @@ export function FeatSlotEditor({ slot, character, derived, catalog, change }: Pr
   const slug = slot.fixedSlug ?? pick?.slug ?? null
   const feat = slug ? look.feats.get(slug) : undefined
   const totals = Object.fromEntries(ABILITIES.map((a) => [a, derived.scores[a].total])) as Record<Ability, number>
-  const eligible = featsForSlot(slot, catalog.feats, character.level)
+  const eligible = featsForSlot(slot, catalog.feats, derived.plan.level)
   const issues = featPickIssues(pick && { ...pick, slug }, feat, fixedMagicInitiateList(slot, derived.plan.background))
 
   const choose = (value: string | null) => {

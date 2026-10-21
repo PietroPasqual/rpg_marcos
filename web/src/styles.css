@@ -1577,6 +1577,66 @@ input.level-number {
   }
 }
 
+/* ---------- Multiclasse, PV e efeitos ---------- */
+.class-levels {
+  list-style: none;
+  margin: 0 0 0.5rem;
+  padding: 0;
+  display: grid;
+  gap: 0.5rem;
+}
+.class-level {
+  display: grid;
+  grid-template-columns: minmax(6rem, 9rem) 1fr 4.5rem auto;
+  gap: 0.6rem;
+  align-items: center;
+}
+.class-block {
+  margin-bottom: 1.5rem;
+  padding-top: 0.25rem;
+}
+.class-block + .class-block {
+  border-top: 2px solid var(--line);
+  padding-top: 1rem;
+}
+.class-block-title {
+  margin: 0 0 0.5rem;
+  font-family: var(--serif);
+  color: var(--accent);
+}
+.hp-table {
+  border-collapse: collapse;
+  min-width: 16rem;
+}
+.hp-table th,
+.hp-table td {
+  padding: 0.25rem 0.6rem;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+}
+.hp-input {
+  display: inline-flex;
+  gap: 0.4rem;
+  align-items: center;
+}
+.hp-input input {
+  width: 7.5rem;
+}
+.attack-extras {
+  margin: 0.25rem 0 0;
+  padding-left: 1.1rem;
+  color: var(--accent);
+  font-size: 0.82rem;
+}
+@media (max-width: 600px) {
+  .class-level {
+    grid-template-columns: 1fr 4.5rem auto;
+  }
+  .class-level-name {
+    grid-column: 1 / -1;
+  }
+}
+
 @media print {
   :root {
     --bg: #fff;

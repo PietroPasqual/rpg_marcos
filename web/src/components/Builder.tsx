@@ -3,6 +3,7 @@ import type { Catalog } from '../api/types'
 import type { Character } from '../domain/character'
 import { autofill } from '../domain/autofill'
 import { derive, formatBonus } from '../domain/derive'
+import { describeClasses } from '../domain/multiclass'
 import { prune } from '../domain/prune'
 import { ABILITIES, ABILITY_LABEL } from '../domain/srd'
 import { STEPS, requiredIssues, validate, type StepId } from '../domain/validation'
@@ -130,7 +131,7 @@ export function Builder({ catalog, id, step, go }: { catalog: Catalog; id: strin
           <aside className="summary no-print" aria-label="Resumo do personagem">
             <h2>{character.name || 'Resumo'}</h2>
             <p className="muted">
-              {derived.plan.cls ? `${derived.plan.cls.name} ${character.level}` : 'Sem classe'}
+              {describeClasses(character, catalog.classes)}
               {derived.plan.species ? ` · ${derived.plan.species.name}` : ''}
             </p>
             <div className="summary-stats">

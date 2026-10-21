@@ -49,7 +49,7 @@ O workflow `.github/workflows/pages.yml` faz isso a cada push na `main`; ative e
 ## Testes e verificação
 
 ```bash
-npm test            # Vitest: regras, cálculos e validação (76 testes)
+npm test            # Vitest: regras, cálculos e validação (117 testes)
 npm run typecheck   # TypeScript
 npm run build       # typecheck + build de produção
 ```
@@ -82,21 +82,24 @@ Compêndio do SRD 5.2.1 dentro do mesmo site, lendo a mesma API:
 
 ## O que está implementado (montador)
 
-- **Nível 1 a 20** de uma classe (as 12 do SRD), com subclasse, aumentos de atributo/talentos por nível e Dádivas Épicas.
+- **Nível 1 a 20**, com as 12 classes do SRD, subclasse, aumentos de atributo/talentos por nível e Dádivas Épicas.
+- **Multiclasse:** quantas classes quiser (nível total até 20), com pré-requisito de 13 nos atributos primários, proficiências parciais da classe adicional, escolhas e magias separadas por classe, espaços de magia combinados (tabela de Conjurador Multiclasse; Magia de Pacto à parte), salvaguardas só da classe inicial e dados de vida de cada classe.
+- **Pontos de vida:** valor médio, rolagem (botão ou digitando cada dado de vida) por classe e nível; o 1º nível da classe inicial é sempre o dado máximo.
 - **Atributos:** Matriz Padrão, Compra de Pontos (27) e Manual; aumentos do antecedente (+2/+1 ou +1/+1/+1).
 - **Espécie:** linhagem/ancestralidade (Elfo, Gnomo, Tiefling, Dragonato, Golias), tamanho, perícia (Humano, Elfo), atributo de conjuração; velocidade e visão no escuro da linhagem; Anão (+1 PV por nível).
 - **Escolhas de classe:** perícias, ferramentas, especialização (Ladino, Bardo, Patrulheiro, Mago), Ordem Divina/Primal, Estilo de Luta (com Guerreiro Abençoado/Druídico), Maestria de Arma, Invocações Místicas, Metamagia.
 - **Talentos:** Aumento de Atributo, Magic Initiate, Skilled, +1 de atributo; efeitos numéricos de Alert, Tough, Defense e Archery.
 - **Magias:** truques, magias preparadas, grimório do Mago, Arcana Mística do Bruxo, espaços (inclusive Magia de Pacto), CD e ataque; magias de subclasse, espécie e talentos.
-- **Cálculos:** PV (valor médio), CA (armadura, escudo, Defesa sem Armadura do Bárbaro e do Monge, Resiliência Dracônica), iniciativa, velocidade (Movimento Rápido, Movimento sem Armadura, penalidade por Força), perícias (meia proficiência do Bardo), salvaguardas, ataques e dano (acuidade, maestria), proficiências, peso e ouro.
+- **Efeitos automáticos:** dano da Fúria e do Ataque Furtivo nas linhas de ataque, Marca do Caçador (sempre preparada, +1d6/+1d10), estilos Armas Grandes e Duas Armas, Afinidade Elemental do Feiticeiro Dracônico (escolha do tipo, resistência e +Car no dano da magia), reservas (Lay on Hands, Bardic Inspiration, Action Surge, Indomitable, Arcane Recovery, Sopro do Dragonborn) e usos por descanso lidos do texto das características (Bônus de Proficiência ou modificador), como a ancestralidade do Golias e a Adrenaline Rush do Orc.
+- **Cálculos:** PV, CA (armadura, escudo, Defesa sem Armadura do Bárbaro e do Monge, Resiliência Dracônica), iniciativa, velocidade (Movimento Rápido, Movimento sem Armadura, penalidade por Força), perícias (meia proficiência do Bardo), salvaguardas, ataques e dano (acuidade, maestria), proficiências, peso e ouro.
 - **Equipamento:** opções A/B/C da classe e do antecedente, inventário editável, equipar armaduras e armas.
 - **Ficha:** completa, para imprimir/PDF (abre as seções recolhidas), modo escuro, funciona no celular; exportar/importar JSON, duplicar, excluir.
 
 ## Limitações conhecidas
 
-- **Sem multiclasse** e sem rolagem de PV (usa o valor médio).
-- Características que dependem de regras mais finas aparecem como **texto e recursos de classe**, mas não alteram os cálculos (ex.: dano do Ataque Furtivo, Fúria, Elemental Affinity, Hunter's Mark, ancestralidade do Golias). Só os efeitos listados acima são automáticos.
-- `Spellbook` e `Arcane Focus` entram no inventário como texto: o SRD não os descreve na tabela de equipamentos.
+- Efeitos que dependem de situações do jogo (estar em Fúria, ter vantagem, empunhar uma arma só, escolher o alvo marcado) aparecem como **texto ao lado do ataque**, não como valores fixos: a ficha não controla o estado do combate.
+- **Conjuração de subclasse** (Cavaleiro Místico do Guerreiro, Trapaceiro Arcano do Ladino) não tem escolhas de magia no assistente.
+- Características muito específicas continuam só como texto, sem alterar números (por exemplo Elemental Affinity além do tipo escolhido, Hunter's Mark além do dano, Divine Smite).
 - Os textos das regras estão em **inglês**, como no SRD; só a interface está em português.
 - Não há contas nem sincronização: se limpar os dados do navegador, as fichas somem. Exporte para guardar cópias.
 
