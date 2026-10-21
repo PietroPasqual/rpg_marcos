@@ -52,6 +52,8 @@ uvicorn main_api:app --port 8000     # terminal 1: a API
 cd web && npm install && npm run dev  # terminal 2: o site em http://localhost:5173
 ```
 
+**GitHub Pages (sem servidor).** O repositório já traz o workflow `.github/workflows/pages.yml`: a cada push na `main` ele gera os JSON do catálogo (`scripts/export_static_site.py`), compila o site em modo estático (`VITE_STATIC_DATA=1`, sem API) e publica. Basta, uma vez, ir em **Settings → Pages → Build and deployment → Source: GitHub Actions**. O site fica em `https://<usuario>.github.io/<repositorio>/`.
+
 Para publicar tudo em um único processo, rode `npm run build` dentro de `web/`: a API passa a servir o site compilado em `/`.
 
 ## Arquivos do Projeto

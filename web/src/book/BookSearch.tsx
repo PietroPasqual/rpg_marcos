@@ -1,20 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
-import { getJson } from '../api/client'
+import { searchCatalog, type SearchResponse } from '../api/client'
 import type { Catalog } from '../api/types'
 import { ENTITY_LABEL, searchResultHref } from './sections'
-
-interface Result {
-  entity_type: string
-  slug: string
-  name: string
-  summary: string
-}
-
-interface SearchResponse {
-  query: string
-  total_matches: number
-  results_by_type: Record<string, Result[]>
-}
 
 export function BookSearch({ catalog }: { catalog: Catalog }) {
   const [query, setQuery] = useState('')
@@ -31,7 +18,7 @@ export function BookSearch({ catalog }: { catalog: Catalog }) {
     }
     let cancelled = false
     const timer = setTimeout(() => {
-      getJson<SearchResponse>(`/api/v1/search?q=${encodeURIComponent(q)}&limit_per_type=6`)
+      searchCatalog(q, 6)
         .then((r) => {
           if (!cancelled) {
             setResponse(r)

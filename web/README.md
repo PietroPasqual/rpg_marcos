@@ -37,6 +37,15 @@ VITE_API_BASE=https://api.meusite.com npm run build   # publique a pasta dist/
 
 A API já libera CORS para qualquer origem (somente leitura).
 
+**Opção 3 — GitHub Pages, sem API.** O modo estático lê JSON pré-gerados em vez de chamar a API (inclusive a busca do livro, feita no navegador):
+
+```bash
+python scripts/export_static_site.py                 # gera web/public/data/*.json
+cd web && VITE_STATIC_DATA=1 npm run build           # publique a pasta dist/
+```
+
+O workflow `.github/workflows/pages.yml` faz isso a cada push na `main`; ative em Settings → Pages → Source: GitHub Actions. O build usa caminhos relativos, então funciona em `usuario.github.io/repositorio/`.
+
 ## Testes e verificação
 
 ```bash

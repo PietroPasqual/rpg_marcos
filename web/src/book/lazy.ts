@@ -1,7 +1,7 @@
 // Dados pesados do livro (monstros, itens mágicos, texto das regras) só são baixados quando alguém abre a seção.
 
 import { useEffect, useState } from 'react'
-import { getAll, getJson } from '../api/client'
+import { loadGlossary, loadMagicItems, loadMonsters, loadRulePart, loadRuleToc } from '../api/client'
 import type { MagicItemData, MonsterData, RuleData, RuleToc } from '../api/types'
 
 const cache = new Map<string, Promise<unknown>>()
@@ -39,8 +39,8 @@ export function useLoaded<T>(key: string, loader: () => Promise<T>): Loaded<T> {
   return state
 }
 
-export const useMonsters = () => useLoaded<MonsterData[]>('monsters', () => getAll<MonsterData>('/api/v1/monsters'))
-export const useMagicItems = () => useLoaded<MagicItemData[]>('magic-items', () => getAll<MagicItemData>('/api/v1/magic-items'))
-export const useGlossary = () => useLoaded<RuleData[]>('glossary', () => getAll<RuleData>('/api/v1/rules?book=false'))
-export const useBookToc = () => useLoaded<RuleToc>('book-toc', () => getJson<RuleToc>('/api/v1/rules/toc'))
-export const useBookPart = (part: string) => useLoaded<RuleData[]>(`book-part:${part}`, () => getAll<RuleData>(`/api/v1/rules?part=${encodeURIComponent(part)}`))
+export const useMonsters = () => useLoaded<MonsterData[]>('monsters', loadMonsters)
+export const useMagicItems = () => useLoaded<MagicItemData[]>('magic-items', loadMagicItems)
+export const useGlossary = () => useLoaded<RuleData[]>('glossary', loadGlossary)
+export const useBookToc = () => useLoaded<RuleToc>('book-toc', loadRuleToc)
+export const useBookPart = (part: string) => useLoaded<RuleData[]>(`book-part:${part}`, () => loadRulePart(part))
