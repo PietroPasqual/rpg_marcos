@@ -1,238 +1,243 @@
 """
-Suíte de Testes Automatizados (Pytest) para a API de Catálogo D&D 5e 2024
-e para os Parsers HTML do Wikidot (BeautifulSoup4).
+Suíte de Testes Automatizados (Pytest) para a API de Catálogo D&D 5e 2024:
+importador do SRD 5.2.1, integridade dos dados importados e rotas da API.
 """
 
 from __future__ import annotations
 
-from bs4 import BeautifulSoup
 from fastapi.testclient import TestClient
 
-from main_api import app, init_db_and_seed
-from wikidot_etl_scraper import (
-    extract_wikidot_spell_index_links,
-    parse_wikidot_background_detail,
-    parse_wikidot_class_progression_table,
-    parse_wikidot_feat_detail,
-    parse_wikidot_spell_detail,
+from main_api import SessionLocal, app, init_db_and_seed
+from schemas_and_models import CatalogMetadataModel
+from srd_importer import (
+    IMPORT_VERSION,
+    build_catalog,
+    clean_text,
+    cost_from_gp,
+    parse_equipment_options,
+    parse_markdown_tables,
+    split_list,
 )
 
-# Inicializa o banco SQLite local e o seed de 2024 antes dos testes
-init_db_and_seed()
+init_db_and_seed(force_reimport=True)
 client = TestClient(app)
+CATALOG = build_catalog()
 
 
 # =====================================================================
-# 1. TESTES DOS PARSERS HTML DO WIKIDOT (FIXTURES REAIS DO DOM WIKIDOT)
+# 1. TESTES DOS UTILITÁRIOS DO IMPORTADOR
 # =====================================================================
 
 
-def test_parse_wikidot_spell_index_yui_tabs() -> None:
-    html = """
-    <div id="page-content">
-      <div class="yui-navset">
-        <ul class="yui-nav">
-          <li class="selected"><a href="#wiki-tab-0-0"><em>Cantrip</em></a></li>
-          <li><a href="#wiki-tab-0-1"><em>1st Level</em></a></li>
-        </ul>
-        <div class="yui-content">
-          <div id="wiki-tab-0-0">
-            <table class="wiki-content-table">
-              <tr><th>Spell Name</th><th>School</th></tr>
-              <tr><td><a href="/spell:sorcerous-burst">Sorcerous Burst</a></td><td>Evocation</td></tr>
-            </table>
-          </div>
-          <div id="wiki-tab-0-1">
-            <table class="wiki-content-table">
-              <tr><th>Spell Name</th><th>School</th></tr>
-              <tr><td><a href="/spell:cure-wounds">Cure Wounds</a></td><td>Abjuration</td></tr>
-            </table>
-          </div>
-        </div>
-      </div>
-    </div>
-    """
-    links = extract_wikidot_spell_index_links(html)
-    assert len(links) == 2
-    assert links[0]["slug"] == "sorcerous-burst"
-    assert links[0]["level"] == 0
-    assert links[1]["slug"] == "cure-wounds"
-    assert links[1]["level"] == 1
+def test_markdown_table_with_caption_and_empty_header() -> None:
+    text = "Intro.\n\nTable: Life Domain Spells\n\n|Cleric Level|Prepared Spells|\n|---|---|\n|3|Aid, Bless|\n|5|Revivify|"
+    [table] = parse_markdown_tables(text)
+    assert table == {"caption": "Life Domain Spells", "headers": ["Cleric Level", "Prepared Spells"], "rows": [["3", "Aid, Bless"], ["5", "Revivify"]]}
+
+    [core] = parse_markdown_tables("|||\n|---|---|\n|Primary Ability|Strength|\n|Hit Point Die|D12 per Barbarian level|")
+    assert core["rows"][0] == ["Primary Ability", "Strength"]
 
 
-def test_parse_wikidot_spell_detail_emanation_and_refs() -> None:
-    html = """
-    <div id="page-title">Spirit Guardians</div>
-    <div id="page-content">
-      <p><em>Source: Player's Handbook (2024)</em></p>
-      <p><em>Level 3 Conjuration (Cleric)</em></p>
-      <p><strong>Casting Time:</strong> Action<br/>
-      <strong>Range:</strong> Self (15-foot Emanation)<br/>
-      <strong>Components:</strong> V, S, M (a prayer scroll)<br/>
-      <strong>Duration:</strong> Concentration, up to 10 minutes</p>
-      <p>Protective spirits flit around you in a 15-foot Emanation. A target makes a Wisdom saving throw, taking 3d8 Radiant damage or <a href="/condition:prone">Prone</a>.</p>
-      <p><strong>Using a Higher-Level Spell Slot.</strong> The damage increases by 1d8 for each spell slot level above 3.</p>
-    </div>
-    """
-    spell = parse_wikidot_spell_detail(html, "spirit-guardians", "http://dnd2024.wikidot.com/spell:spirit-guardians")
-    assert spell.name == "Spirit Guardians"
-    assert spell.level == 3
-    assert spell.school.value == "Conjuration"
-    assert spell.class_lists == ["cleric"]
-    assert spell.concentration is True
-    assert spell.area_of_effect == {"type": "Emanation", "size_ft": 15}
-    assert spell.saving_throw_ability == "WIS"
-    assert any(d.value == "Radiant" for d in spell.damage_types)
-    assert len(spell.referenced_entities) == 1
-    assert spell.referenced_entities[0].slug == "prone"
+def test_equipment_options_with_quantities_and_three_choices() -> None:
+    options = parse_equipment_options(
+        "Choose A, B, or C: (A) Chain Mail, 8 Javelins, Dungeoneer's Pack, and 4 GP; (B) Book (prayers), 11 GP; or (C) 155 GP"
+    )
+    assert [o["option_label"] for o in options] == ["A", "B", "C"]
+    assert options[0]["items"][1] == {"item_slug": "javelins", "item_name": "Javelins", "quantity": 8}
+    assert options[0]["gold_gp"] == 4
+    assert options[1]["items"][0]["item_name"] == "Book (prayers)"
+    assert options[2] == {"option_label": "C", "items": [], "gold_gp": 155}
 
 
-def test_parse_wikidot_class_table_with_colspan_and_weapon_mastery() -> None:
-    html = """
-    <table class="wiki-content-table">
-      <tr>
-        <th colspan="6">The Barbarian</th>
-      </tr>
-      <tr>
-        <th>Level</th>
-        <th>Proficiency Bonus</th>
-        <th>Class Features</th>
-        <th>Rages</th>
-        <th>Rage Damage</th>
-        <th>Weapon Mastery</th>
-      </tr>
-      <tr>
-        <td>1st</td>
-        <td>+2</td>
-        <td>Rage, Unarmored Defense, Weapon Mastery</td>
-        <td>2</td>
-        <td>+2</td>
-        <td>2</td>
-      </tr>
-      <tr>
-        <td>3rd</td>
-        <td>+2</td>
-        <td>Barbarian Subclass, Primal Knowledge</td>
-        <td>3</td>
-        <td>+2</td>
-        <td>2</td>
-      </tr>
-    </table>
-    """
-    soup = BeautifulSoup(html, "lxml")
-    table = soup.find("table")
-    assert table is not None
-    rows = parse_wikidot_class_progression_table(table)
-    assert len(rows) == 2
-    assert rows[0].level == 1
-    assert rows[0].weapon_masteries_known == 2
-    assert rows[0].class_specific_columns["rages"] == 2
-    assert "weapon-mastery" in rows[0].feature_slugs
-
-
-def test_parse_wikidot_feat_and_background_2024() -> None:
-    feat_html = """
-    <div id="page-title">Grappler</div>
-    <div id="page-content">
-      <p><em>Source: Player's Handbook (2024)</em></p>
-      <p><em>General Feat (Prerequisite: Level 4+, Strength or Dexterity 13+)</em></p>
-      <p>You gain the following benefits.</p>
-      <p><strong><em>Ability Score Increase.</em></strong> Increase your Strength or Dexterity score by 1, to a maximum of 20.</p>
-      <p><strong><em>Punch and Grab.</em></strong> When you hit a creature with an Unarmed Strike, you can use both Damage and Grapple.</p>
-    </div>
-    """
-    feat = parse_wikidot_feat_detail(feat_html, "grappler", "http://dnd2024.wikidot.com/feat:grappler")
-    assert feat.category.value == "General"
-    assert feat.level_prerequisite == 4
-    assert [a.value for a in feat.ability_score_increase_options] == ["STR", "DEX"]
-    assert len(feat.benefits) == 2
-
-    bg_html = """
-    <div id="page-title">Soldier</div>
-    <div id="page-content">
-      <p><em>Source: Player's Handbook (2024)</em></p>
-      <p><strong>Ability Scores:</strong> Strength, Dexterity, Constitution<br/>
-      <strong>Feat:</strong> Savage Attacker<br/>
-      <strong>Skill Proficiencies:</strong> Athletics and Intimidation<br/>
-      <strong>Tool Proficiency:</strong> Gaming Set<br/>
-      <strong>Equipment:</strong> Choose A or B: (A) Spear, Shortbow, 14 GP; or (B) 50 GP</p>
-      <p>You began training for war as soon as you reached adulthood.</p>
-    </div>
-    """
-    bg = parse_wikidot_background_detail(bg_html, "soldier", "http://dnd2024.wikidot.com/background:soldier")
-    assert [a.value for a in bg.ability_scores] == ["STR", "DEX", "CON"]
-    assert bg.origin_feat_slug == "savage-attacker"
-    assert bg.skill_proficiencies == ["Athletics", "Intimidation"]
-    assert len(bg.equipment_options) == 2
-    assert bg.equipment_options[1].gold_gp == 50
+def test_text_helpers() -> None:
+    assert split_list("Insight and Religion") == ["Insight", "Religion"]
+    assert split_list("Arcana, History, or Religion") == ["Arcana", "History", "Religion"]
+    assert cost_from_gp("15.00") == ("15 GP", 1500)
+    assert cost_from_gp("0.10") == ("1 SP", 10)
+    assert cost_from_gp("0.01") == ("1 CP", 1)
+    assert clean_text("a 20-foot-radius Sphere [Area of Effect]|XPHB|Sphere centered") == "a 20-foot-radius Sphere centered"
+    assert clean_text("it has Cover|XPHB|Total Cover against") == "it has Total Cover against"
 
 
 # =====================================================================
-# 2. TESTES DE INTEGRAÇÃO DOS ENDPOINTS FASTAPI (CATÁLOGO V1)
+# 2. INTEGRIDADE DO CATÁLOGO IMPORTADO DO SRD 5.2.1
 # =====================================================================
 
 
-def test_health_and_classes_endpoints() -> None:
-    r = client.get("/health")
-    assert r.status_code == 200
-    assert r.json()["status"] == "ok"
-
-    classes_resp = client.get("/api/v1/classes?has_weapon_mastery=true")
-    assert classes_resp.status_code == 200
-    data = classes_resp.json()
-    assert data["meta"]["total"] >= 1
-    assert data["items"][0]["slug"] == "barbarian"
-
-    lvl_resp = client.get("/api/v1/classes/barbarian/levels/3")
-    assert lvl_resp.status_code == 200
-    assert "Barbarian Subclass" in lvl_resp.json()["feature_names"]
-
-    sub_resp = client.get("/api/v1/classes/barbarian/subclasses")
-    assert sub_resp.status_code == 200
-    assert sub_resp.json()[0]["slug"] == "path-of-the-berserker"
+def test_catalog_counts_and_version() -> None:
+    counts = {key: len(rows) for key, rows in CATALOG.items()}
+    assert counts["classes"] == 12
+    assert counts["subclasses"] == 12
+    assert counts["species"] == 9
+    assert counts["backgrounds"] == 4
+    assert counts["feats"] == 17
+    assert counts["weapon_masteries"] == 8
+    assert counts["weapons"] == 38
+    assert counts["armor"] == 13
+    assert counts["spells"] >= 330
+    assert counts["monsters"] >= 320
+    assert counts["magic_items"] >= 700
+    assert counts["rules"] >= 200
+    with SessionLocal() as session:
+        assert session.get(CatalogMetadataModel, "import_version").value == IMPORT_VERSION
 
 
-def test_origins_feats_and_spells_filters() -> None:
-    bg_resp = client.get("/api/v1/backgrounds?ability=INT")
-    assert bg_resp.status_code == 200
-    slugs = [b["slug"] for b in bg_resp.json()["items"]]
-    assert "acolyte" in slugs
-    assert "sage" in slugs
+def test_cross_references_point_to_existing_records() -> None:
+    slugs = {key: {row["slug"] for row in rows} for key, rows in CATALOG.items()}
+    for spell in CATALOG["spells"]:
+        assert set(spell["class_lists"]) <= slugs["classes"], spell["slug"]
+    for background in CATALOG["backgrounds"]:
+        assert background["origin_feat_slug"] in slugs["feats"]
+    for weapon in CATALOG["weapons"]:
+        assert weapon["mastery_slug"] in slugs["weapon_masteries"]
+    for subclass in CATALOG["subclasses"]:
+        assert subclass["parent_class_slug"] in slugs["classes"]
+    for rule in CATALOG["rules"]:
+        assert set(rule["see_also_slugs"]) <= slugs["rules"], rule["slug"]
+        assert all(ref["slug"] in slugs["rules"] for ref in rule.get("referenced_entities", []))
+    assert "XPHB" not in str(CATALOG)
 
-    elf_resp = client.get("/api/v1/species/elf")
-    assert elf_resp.status_code == 200
-    assert len(elf_resp.json()["lineages"]) == 3
-    assert "ETag" in elf_resp.headers
 
-    spells_resp = client.get("/api/v1/spells?level=0&class_slug=sorcerer")
-    assert spells_resp.status_code == 200
-    assert spells_resp.json()["items"][0]["slug"] == "sorcerous-burst"
+def test_every_class_has_complete_level_table() -> None:
+    for cls in CATALOG["classes"]:
+        assert [row["level"] for row in cls["level_table"]] == list(range(1, 21)), cls["slug"]
+        assert cls["primary_abilities"], cls["slug"]
+        assert cls["level_table"][0]["proficiency_bonus"] == 2
+        assert cls["level_table"][19]["proficiency_bonus"] == 6
+        assert cls["multiclassing"]["proficiencies_gained"]["description"], cls["slug"]
 
 
-def test_equipment_monsters_bastions_rules_and_omnisearch() -> None:
-    wm_resp = client.get("/api/v1/equipment/weapon-masteries")
-    assert wm_resp.status_code == 200
-    assert len(wm_resp.json()) == 8
+# =====================================================================
+# 3. TESTES DE INTEGRAÇÃO DOS ENDPOINTS FASTAPI (CATÁLOGO V1)
+# =====================================================================
 
-    w_resp = client.get("/api/v1/equipment/weapons?mastery=sap")
-    assert w_resp.status_code == 200
-    assert w_resp.json()["items"][0]["slug"] == "longsword"
 
-    t_resp = client.get("/api/v1/equipment/tools/thieves-tools")
-    assert t_resp.status_code == 200
-    assert t_resp.json()["utilize_actions"][0]["dc"] == 15
+def test_health_about_and_classes() -> None:
+    assert client.get("/health").json()["status"] == "ok"
 
-    m_resp = client.get("/api/v1/monsters/owlbear")
-    assert m_resp.status_code == 200
-    assert m_resp.json()["initiative_passive"] == 11
+    about = client.get("/api/v1/about").json()
+    assert about["license"] == "CC-BY-4.0"
+    assert "System Reference Document 5.2.1" in about["attribution"]
+    assert about["counts"]["classes"] == 12
 
-    r_resp = client.get("/api/v1/rules/exhaustion")
-    assert r_resp.status_code == 200
-    assert r_resp.json()["tag"] == "Condition"
+    mastery_classes = client.get("/api/v1/classes?has_weapon_mastery=true&size=100").json()
+    assert {c["slug"] for c in mastery_classes["items"]} == {"barbarian", "fighter", "paladin", "ranger", "rogue"}
 
-    search_resp = client.get("/api/v1/search?q=fire")
-    assert search_resp.status_code == 200
-    assert search_resp.json()["total_matches"] >= 1
+    wizard = client.get("/api/v1/classes/wizard").json()
+    assert wizard["primary_abilities"] == ["INT"]
+    assert wizard["spellcasting_ability"] == "INT"
+    assert wizard["skill_options"].count("Insight") == 1
+
+    lvl5 = client.get("/api/v1/classes/wizard/levels/5").json()
+    assert lvl5["spellcasting"]["slots_by_level"] == {"1": 4, "2": 3, "3": 2}
+    assert lvl5["proficiency_bonus"] == 3
+
+    warlock11 = client.get("/api/v1/classes/warlock/levels/11").json()
+    assert warlock11["spellcasting"]["pact_slots_count"] == 3
+    assert warlock11["spellcasting"]["pact_slot_level"] == 5
+
+    barbarian1 = client.get("/api/v1/classes/barbarian/levels/1").json()
+    assert barbarian1["class_specific_columns"]["rages"] == 2
+    assert barbarian1["weapon_masteries_known"] == 2
+    assert "Rage" in barbarian1["feature_names"]
+
+    subclasses = client.get("/api/v1/classes/barbarian/subclasses").json()
+    assert [s["slug"] for s in subclasses] == ["path-of-the-berserker"]
+
+    life = client.get("/api/v1/subclasses/life-domain").json()
+    assert life["always_prepared_spells"][0]["spell_slugs"] == ["aid", "bless", "cure-wounds", "lesser-restoration"]
+
+
+def test_origins_and_feats() -> None:
+    bg = client.get("/api/v1/backgrounds/acolyte").json()
+    assert bg["ability_scores"] == ["INT", "WIS", "CHA"]
+    assert bg["origin_feat_slug"] == "magic-initiate"
+    assert bg["skill_proficiencies"] == ["Insight", "Religion"]
+    assert [o["gold_gp"] for o in bg["equipment_options"]] == [8, 50]
+
+    elf = client.get("/api/v1/species/elf")
+    assert elf.status_code == 200
+    assert "ETag" in elf.headers
+    assert [lin["slug"] for lin in elf.json()["lineages"]] == ["drow", "high-elf", "wood-elf"]
+
+    grappler = client.get("/api/v1/feats/grappler").json()
+    assert grappler["category"] == "General"
+    assert grappler["level_prerequisite"] == 4
+    assert grappler["ability_score_increase_options"] == ["STR", "DEX"]
+
+    epic = client.get("/api/v1/feats?category=Epic%20Boon&size=100").json()
+    assert epic["meta"]["total"] == 7
+    assert all(f["level_prerequisite"] == 19 for f in epic["items"])
+
+
+def test_spells_and_filters() -> None:
+    fireball = client.get("/api/v1/spells/fireball").json()
+    assert fireball["level"] == 3
+    assert fireball["school"] == "Evocation"
+    assert fireball["area_of_effect"] == {"type": "Sphere", "size_ft": 20}
+    assert fireball["saving_throw_ability"] == "DEX"
+    assert fireball["damage_types"] == ["Fire"]
+
+    guardians = client.get("/api/v1/spells/spirit-guardians").json()
+    assert guardians["concentration"] is True
+    assert guardians["duration"] == "Concentration, up to 10 minutes"
+
+    wizard_cantrips = client.get("/api/v1/spells?level=0&class_slug=wizard&size=100").json()
+    assert wizard_cantrips["meta"]["total"] >= 10
+    assert "fire-bolt" in [s["slug"] for s in wizard_cantrips["items"]]
+
+    evocation3 = client.get("/api/v1/spells?level=3&school=Evocation&size=100").json()
+    assert "fireball" in [s["slug"] for s in evocation3["items"]]
+
+
+def test_equipment_monsters_rules_and_omnisearch() -> None:
+    masteries = client.get("/api/v1/equipment/weapon-masteries").json()
+    assert len(masteries) == 8
+    assert "longsword" in next(m for m in masteries if m["slug"] == "sap")["compatible_weapons"]
+
+    longsword = client.get("/api/v1/equipment/weapons/longsword").json()
+    assert longsword["mastery_slug"] == "sap"
+    assert longsword["versatile_damage_dice"] == "1d10"
+    assert longsword["cost_cp"] == 1500
+
+    longbow = client.get("/api/v1/equipment/weapons/longbow").json()
+    assert (longbow["range_type"], longbow["range_normal_ft"], longbow["range_long_ft"]) == ("Ranged", 150, 600)
+
+    chain = client.get("/api/v1/equipment/armor/chain-mail").json()
+    assert (chain["category"], chain["base_ac"], chain["strength_requirement"]) == ("Heavy Armor", 16, 13)
+
+    thieves = client.get("/api/v1/equipment/tools/thieves-tools").json()
+    assert thieves["ability"] == "DEX"
+    assert thieves["utilize_actions"][0] == {"action_description": "Pick a lock", "dc": 15}
+
+    pack = client.get("/api/v1/equipment/gear/explorers-pack").json()
+    assert {"item_slug": "rations", "item_name": "Rations", "quantity": 10} in pack["pack_contents"]
+
+    owlbear = client.get("/api/v1/monsters/owlbear").json()
+    assert owlbear["challenge_rating"] == "3"
+    assert owlbear["xp"] == 700
+    assert owlbear["initiative_passive"] == 11
+    assert owlbear["abilities"]["STR"] == {"score": 20, "modifier": 5, "saving_throw": 5}
+
+    dragon = client.get("/api/v1/monsters/adult-red-dragon").json()
+    breath = next(a for a in dragon["actions"] if a["name"] == "Fire Breath")
+    assert breath["recharge"] == "Recharge 5–6"
+    assert (breath["saving_throw_ability"], breath["saving_throw_dc"]) == ("DEX", 21)
+    assert dragon["legendary_actions"]
+
+    exhaustion = client.get("/api/v1/rules/exhaustion").json()
+    assert exhaustion["tag"] == "Condition"
+    assert len(exhaustion["bullet_effects"]) == 4
+
+    conditions = client.get("/api/v1/rules?tag=Condition&size=100").json()
+    assert conditions["meta"]["total"] == 15
+
+    bag = client.get("/api/v1/magic-items/bag-of-holding").json()
+    assert (bag["rarity"], bag["item_category"]) == ("Uncommon", "Wondrous Item")
+
+    search = client.get("/api/v1/search?q=fire").json()
+    assert search["total_matches"] >= 1
+    assert "spells" in search["results_by_type"]
 
 
 def test_rfc7807_not_found_with_fuzzy_suggestions() -> None:
@@ -242,23 +247,38 @@ def test_rfc7807_not_found_with_fuzzy_suggestions() -> None:
     assert body["title"] == "Resource Not Found"
     assert "fireball" in body["suggestions"]
 
+
+def test_every_list_endpoint_and_sample_details() -> None:
+    routes = [
+        "classes", "class-feature-options", "species", "backgrounds", "feats", "spells", "equipment/weapons",
+        "equipment/armor", "equipment/tools", "equipment/gear", "magic-items", "monsters", "rules",
+    ]
+    for route in routes:
+        listing = client.get(f"/api/v1/{route}?size=100")
+        assert listing.status_code == 200, route
+        items = listing.json()["items"]
+        assert items, route
+        for item in items[:: max(1, len(items) // 10)]:
+            assert client.get(f"/api/v1/{route}/{item['slug']}").status_code == 200, (route, item["slug"])
+
+
 # =====================================================================
-# 3. TESTES DE REGRESSÃO: PAGINAÇÃO, CACHE, ERROS E BUSCA
+# 4. TESTES DE REGRESSÃO: PAGINAÇÃO, CACHE, ERROS E BUSCA
 # =====================================================================
 
 
 def test_json_filters_are_applied_before_pagination() -> None:
-    # Antecedentes com INT: acolyte, criminal, sage (3 no total), 1 por página
+    # Antecedentes do SRD com INT: acolyte, criminal, sage (3 no total), 1 por página
     page2 = client.get("/api/v1/backgrounds?ability=INT&size=1&page=2").json()
     assert page2["meta"]["total"] == 3
     assert page2["meta"]["pages"] == 3
     assert page2["meta"]["has_next"] is True
     assert [b["slug"] for b in page2["items"]] == ["criminal"]
 
-    # Magias de feiticeiro: sorcerous-burst (nível 0) e fireball (nível 3)
-    spells = client.get("/api/v1/spells?class_slug=sorcerer&size=1&page=2").json()
-    assert spells["meta"]["total"] == 2
-    assert [s["slug"] for s in spells["items"]] == ["fireball"]
+    all_sorcerer = client.get("/api/v1/spells?class_slug=sorcerer&size=100").json()
+    paged = client.get("/api/v1/spells?class_slug=sorcerer&size=10&page=2").json()
+    assert paged["meta"]["total"] == all_sorcerer["meta"]["total"] > 100
+    assert [s["slug"] for s in paged["items"]] == [s["slug"] for s in all_sorcerer["items"][10:20]]
 
     empty_page = client.get("/api/v1/backgrounds?ability=INT&size=1&page=9").json()
     assert empty_page["meta"]["total"] == 3
@@ -293,12 +313,15 @@ def test_all_errors_use_rfc7807_problem_details() -> None:
     assert unknown_route.status_code == 404
     assert unknown_route.headers["content-type"].startswith("application/problem+json")
 
+    assert client.get("/api/v1/bastion-facilities").status_code == 404
+
 
 def test_like_wildcards_are_literal_and_search_covers_all_types() -> None:
     assert client.get("/api/v1/spells?q=%25").json()["meta"]["total"] == 0
-    assert client.get("/api/v1/spells?q=_").json()["meta"]["total"] == 0
+    literal_underscore = sum(1 for s in CATALOG["spells"] if "_" in s["name"] + s["description"])
+    assert client.get("/api/v1/spells?q=_&size=1").json()["meta"]["total"] == literal_underscore < len(CATALOG["spells"])
 
-    search = client.get("/api/v1/search?q=bag").json()
+    search = client.get("/api/v1/search?q=bag%20of%20holding").json()
     assert "magic_items" in search["results_by_type"]
     assert search["results_by_type"]["magic_items"][0]["api_path"] == "/api/v1/magic-items/bag-of-holding"
 

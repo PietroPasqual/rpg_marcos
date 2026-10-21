@@ -109,6 +109,7 @@ class RuleGlossaryTagEnum(StrEnum):
     CONDITION = "Condition"
     HAZARD = "Hazard"
     GENERAL_RULE = "General Rule"
+    RULES_SECTION = "Rules Section"
 
 
 class FeatureOptionCategoryEnum(StrEnum):
@@ -140,7 +141,7 @@ class CatalogMixin:
     source_book: Mapped[str] = mapped_column(String(120), default="Player's Handbook (2024)", nullable=False)
     source_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     is_srd: Mapped[bool] = mapped_column(Boolean, default=True, index=True, nullable=False)
-    raw_html_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    source_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     referenced_entities: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
 
@@ -393,18 +394,14 @@ class MonsterModel(CatalogMixin, Base):
     legendary_actions: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list, nullable=False)
 
 
-class BastionFacilityModel(CatalogMixin, Base):
-    __tablename__ = "bastion_facilities"
 
-    facility_type: Mapped[str] = mapped_column(String(40), index=True, nullable=False)
-    level_prerequisite: Mapped[int] = mapped_column(Integer, default=5, index=True, nullable=False)
-    prerequisite_text: Mapped[str | None] = mapped_column(String(250), nullable=True)
-    space: Mapped[str] = mapped_column(String(60), nullable=False)
-    hirelings_count: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
-    bastion_order: Mapped[str | None] = mapped_column(String(60), index=True, nullable=True)
-    passive_benefit: Mapped[str | None] = mapped_column(Text, nullable=True)
-    order_options: Mapped[list[dict[str, str]]] = mapped_column(JSON, default=list, nullable=False)
-    description: Mapped[str] = mapped_column(Text, nullable=False)
+class CatalogMetadataModel(Base):
+    """Chave/valor com a versão do catálogo importado (usado para reimportar quando o importador muda)."""
+
+    __tablename__ = "catalog_metadata"
+
+    key: Mapped[str] = mapped_column(String(60), primary_key=True)
+    value: Mapped[str] = mapped_column(Text, nullable=False)
 
 
 class RuleGlossaryModel(CatalogMixin, Base):
@@ -753,7 +750,7 @@ class MagicItemSchema(CatalogBaseSchema):
     description: str
 
 
-# --- Monstros, Bastiões e Glossário de Regras ---
+# --- Monstros e Glossário de Regras ---
 
 
 class MonsterAbilityEntrySchema(BaseModel):
@@ -810,17 +807,6 @@ class MonsterSchema(CatalogBaseSchema):
     legendary_actions_in_lair: int | None = None
     legendary_actions: list[MonsterTraitOrActionSchema] = Field(default_factory=list)
 
-
-class BastionFacilitySchema(CatalogBaseSchema):
-    facility_type: str
-    level_prerequisite: int = 5
-    prerequisite_text: str | None = None
-    space: str
-    hirelings_count: int = 1
-    bastion_order: str | None = None
-    passive_benefit: str | None = None
-    order_options: list[dict[str, str]] = Field(default_factory=list)
-    description: str
 
 
 class RuleGlossarySchema(CatalogBaseSchema):
