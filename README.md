@@ -43,9 +43,9 @@ A Wizards pede que não seja incluída nenhuma outra atribuição a ela; é perm
 
 Limitações conhecidas dos dados: tabelas do glossário (ex.: *Damage Types*, *Carrying Capacity*) não são extraídas, só o texto; o número de usos de Ações Lendárias dos monstros não existe no dataset de origem; algumas descrições curtas de montarias, veículos e munições foram escritas pelo Open5e e não pelo SRD.
 
-## Montador de ficha (site)
+## Montador de ficha e Livro de Regras (site)
 
-A pasta [`web/`](web/README.md) contém um site em React que monta fichas de personagem passo a passo (classe, origem, atributos, escolhas, magias, equipamento e ficha final para imprimir) usando esta API. Para vê-lo funcionando:
+A pasta [`web/`](web/README.md) contém um site em React que monta fichas de personagem passo a passo (classe, origem, atributos, escolhas, magias, equipamento e ficha final para imprimir) e traz um **Livro de Regras** navegável (texto das regras, classes, magias, equipamento, itens mágicos, monstros, com busca) usando esta API. Para vê-lo funcionando:
 
 ```bash
 uvicorn main_api:app --port 8000     # terminal 1: a API

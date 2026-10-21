@@ -232,6 +232,11 @@ def test_rulebook_toc_and_reading_order() -> None:
     assert "| Terrain | Maximum Pace |" in travel["description"]
     assert all(r["part"] == "Gameplay Toolbox" for r in toolbox["items"])
 
+    assert client.get("/api/v1/rules?book=true&size=1").json()["meta"]["total"] == len([r for r in CATALOG["rules"] if r.get("part")])
+    assert client.get("/api/v1/rules?book=false&size=1").json()["meta"]["total"] == 155
+    rings = client.get("/api/v1/magic-items?item_category=ring&size=100").json()
+    assert rings["meta"]["total"] == 22 and all(i["item_category"] == "Ring" for i in rings["items"])
+
     glossary_only = client.get("/api/v1/rules?tag=Condition&size=100").json()["items"]
     assert all(r["part"] is None and r["depth"] == 0 for r in glossary_only)
 

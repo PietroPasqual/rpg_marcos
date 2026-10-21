@@ -1,4 +1,4 @@
-# Montador de Ficha D&D 5e (regras de 2024)
+# Montador de Ficha e Livro de Regras D&D 5e (regras de 2024)
 
 Site em **React + TypeScript + Vite** que monta fichas de personagem passo a passo, usando a API de catálogo do SRD 5.2.1 deste repositório como única fonte das regras. Não há servidor próprio nem contas: as fichas ficam no navegador (`localStorage`) e podem ser exportadas/importadas como arquivo JSON.
 
@@ -57,11 +57,21 @@ src/
     derive.ts     todos os cálculos da ficha (atributos, PV, CA, perícias, ataques, magias...)
     validation.ts pendências por etapa;  prune.ts remove escolhas que deixaram de valer
     autofill.ts   "Preencher o que falta";  equipment.ts inventário;  feats.ts, spells.ts
+  book/       Livro de Regras: páginas (pages/), detalhes de verbetes (detail/), lista+detalhe, busca
   components/ assistente (steps/), ficha (Sheet.tsx), lista de personagens (Home.tsx)
   state/      armazenamento local, exportar/importar
 ```
 
-## O que está implementado
+## Livro de Regras (`#/livro`)
+
+Compêndio do SRD 5.2.1 dentro do mesmo site, lendo a mesma API:
+
+- **Regras do jogo:** o texto do livro na ordem original (partes e capítulos, com tabelas), índice lateral, anterior/próximo e números de página.
+- **Glossário** de termos de regra, **classes** (tabela de níveis, características, subclasses, opções), **espécies**, **antecedentes**, **talentos**, **magias** (filtros de nível, escola, classe, concentração e ritual), **armas** (com maestrias), **armaduras**, **ferramentas**, **equipamento de aventura**, **itens mágicos** (raridade, categoria, sintonização) e **monstros** (ND, tipo, bloco de estatísticas).
+- **Busca global** no topo (`/api/v1/search`) e links diretos para cada verbete (`#/livro/magias/fireball`).
+- Itens mágicos, monstros, glossário e as partes do texto das regras são baixados sob demanda (`src/book/lazy.ts`), para o montador de ficha continuar leve.
+
+## O que está implementado (montador)
 
 - **Nível 1 a 20** de uma classe (as 12 do SRD), com subclasse, aumentos de atributo/talentos por nível e Dádivas Épicas.
 - **Atributos:** Matriz Padrão, Compra de Pontos (27) e Manual; aumentos do antecedente (+2/+1 ou +1/+1/+1).

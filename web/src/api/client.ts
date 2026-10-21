@@ -28,7 +28,7 @@ export class ApiError extends Error {
   }
 }
 
-async function getJson<T>(path: string): Promise<T> {
+export async function getJson<T>(path: string): Promise<T> {
   let response: Response
   try {
     response = await fetch(`${API_BASE}${path}`, { headers: { Accept: 'application/json' } })
@@ -48,7 +48,7 @@ async function getJson<T>(path: string): Promise<T> {
 }
 
 /** Busca todas as páginas de uma listagem (100 itens por página). */
-async function getAll<T>(path: string): Promise<T[]> {
+export async function getAll<T>(path: string): Promise<T[]> {
   const separator = path.includes('?') ? '&' : '?'
   const first = await getJson<Paginated<T>>(`${path}${separator}size=100&page=1`)
   const rest = await Promise.all(

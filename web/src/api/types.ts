@@ -129,6 +129,7 @@ export interface SpeciesData extends Named {
   traits: SpeciesTrait[]
   lineage_table_title: string | null
   lineages: Lineage[]
+  description: string
 }
 
 export interface BackgroundData extends Named {
@@ -223,6 +224,80 @@ export interface WeaponMasteryData extends Named {
   trigger_condition: string
   effect_summary: string
   description: string
+}
+
+// ---------- Livro de regras ----------
+
+export interface MonsterTrait {
+  name: string
+  recharge: string | null
+  action_type: string
+  attack_roll_type?: string | null
+  attack_bonus?: number | null
+  reach_or_range?: string | null
+  saving_throw_dc?: number | null
+  saving_throw_ability?: Ability | null
+  hit_or_fail_effect?: string | null
+  description: string
+}
+
+export interface MonsterData extends Named {
+  size: string[]
+  creature_type: string
+  alignment: string
+  armor_class: number
+  armor_notes: string | null
+  initiative_bonus: number
+  initiative_passive: number
+  hit_points: number
+  hit_dice_formula: string
+  speeds: Record<string, string>
+  abilities: Record<Ability, { score: number; modifier: number; saving_throw: number }>
+  skills: Record<string, number>
+  damage_vulnerabilities: string[]
+  damage_resistances: string[]
+  damage_immunities: string[]
+  condition_immunities: string[]
+  senses: Record<string, string | number>
+  languages: string[]
+  challenge_rating: string
+  cr_numeric: number
+  xp: number
+  proficiency_bonus: number
+  traits: MonsterTrait[]
+  actions: MonsterTrait[]
+  bonus_actions: MonsterTrait[]
+  reactions: MonsterTrait[]
+  legendary_actions: MonsterTrait[]
+}
+
+export interface MagicItemData extends Named {
+  item_category: string
+  rarity: string
+  requires_attunement: boolean
+  attunement_requirement: string | null
+  base_weapon_or_armor_slug: string | null
+  bonus_value: number | null
+  charges_max: number | null
+  recharge_formula: string | null
+  description: string
+}
+
+export interface RuleData extends Named {
+  tag: string
+  part: string | null
+  chapter: string | null
+  depth: number
+  position: number
+  page: number | null
+  summary: string
+  bullet_effects: string[]
+  description: string
+  see_also_slugs: string[]
+}
+
+export interface RuleToc {
+  parts: { slug: string; name: string; sections: { slug: string; name: string; depth: number; page: number | null }[] }[]
 }
 
 // ---------- Catálogo carregado ----------

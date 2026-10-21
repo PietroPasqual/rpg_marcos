@@ -918,9 +918,12 @@ def list_magic_items(
     size: Annotated[int, Query(ge=1, le=100)] = 20,
     rarity: Annotated[MagicItemRarityEnum | None, Query()] = None,
     requires_attunement: Annotated[bool | None, Query()] = None,
+    item_category: Annotated[str | None, Query(description="Ex.: Weapon, Armor, Wondrous Item, Ring, Potion, Wand, Staff, Rod")] = None,
     q: Annotated[str | None, Query()] = None,
 ) -> PaginatedResponse[MagicItemSchema]:
     stmt = select(MagicItemModel)
+    if item_category:
+        stmt = stmt.where(func.lower(MagicItemModel.item_category) == item_category.lower().strip())
     if rarity:
         stmt = stmt.where(MagicItemModel.rarity == rarity.value)
     if requires_attunement is not None:
@@ -999,6 +1002,7 @@ def list_rules(
     page: Annotated[int, Query(ge=1)] = 1,
     size: Annotated[int, Query(ge=1, le=100)] = 20,
     tag: Annotated[RuleGlossaryTagEnum | None, Query()] = None,
+    book: Annotated[bool | None, Query(description="true = só o texto do livro de regras; false = só o glossário")] = None,
     part: Annotated[str | None, Query(description="Parte do livro (ex.: Gameplay Toolbox); a lista sai na ordem de leitura")] = None,
     chapter: Annotated[str | None, Query(description="Capítulo dentro da parte")] = None,
     q: Annotated[str | None, Query()] = None,
@@ -1006,6 +1010,8 @@ def list_rules(
     stmt = select(RuleGlossaryModel)
     if tag:
         stmt = stmt.where(RuleGlossaryModel.tag == tag.value)
+    if book is not None:
+        stmt = stmt.where(RuleGlossaryModel.part.is_not(None) if book else RuleGlossaryModel.part.is_(None))
     if part:
         stmt = stmt.where(func.lower(RuleGlossaryModel.part) == part.lower().strip())
     if chapter:

@@ -1,17 +1,19 @@
 import { useCallback, useEffect, useState } from 'react'
 import { loadCatalog } from './api/client'
 import type { Catalog } from './api/types'
+import { BookApp } from './book/BookApp'
 import { Builder, type BuilderStep } from './components/Builder'
 import { Home } from './components/Home'
 import { Notice } from './components/ui'
 import { STEPS } from './domain/validation'
 
-type Route = { name: 'home' } | { name: 'builder'; id: string; step: BuilderStep }
+type Route = { name: 'home' } | { name: 'builder'; id: string; step: BuilderStep } | { name: 'book'; segments: string[] }
 
 const STEP_IDS = new Set<string>([...STEPS.map((s) => s.id), 'sheet'])
 
 function parseHash(): Route {
   const [kind, id, step] = location.hash.replace(/^#\/?/, '').split('/')
+  if (kind === 'livro') return { name: 'book', segments: location.hash.replace(/^#\/?livro\/?/, '').split('/').filter(Boolean).map(decodeURIComponent) }
   if (kind === 'c' && id) return { name: 'builder', id, step: STEP_IDS.has(step ?? '') ? (step as BuilderStep) : 'class' }
   return { name: 'home' }
 }
@@ -52,7 +54,14 @@ export default function App() {
         <a href="#/" className="brand">
           <span aria-hidden="true">⚔</span> Montador de Ficha D&amp;D 5e
         </a>
-        <span className="muted">Regras de 2024 · SRD 5.2.1</span>
+        <nav className="app-nav" aria-label="Principal">
+          <a href="#/" className={route.name !== 'book' ? 'active' : ''}>
+            Fichas
+          </a>
+          <a href="#/livro" className={route.name === 'book' ? 'active' : ''}>
+            Livro de Regras
+          </a>
+        </nav>
       </header>
       <div className="app-content">
         {error && (
@@ -69,7 +78,9 @@ export default function App() {
             Carregando o catálogo de regras…
           </div>
         )}
-        {catalog && (route.name === 'home' ? <Home catalog={catalog} go={go} /> : <Builder key={route.id} catalog={catalog} id={route.id} step={route.step} go={go} />)}
+        {catalog && route.name === 'home' && <Home catalog={catalog} go={go} />}
+        {catalog && route.name === 'builder' && <Builder key={route.id} catalog={catalog} id={route.id} step={route.step} go={go} />}
+        {catalog && route.name === 'book' && <BookApp catalog={catalog} segments={route.segments} />}
       </div>
       <footer className="app-foot no-print">
         <small>
