@@ -1,0 +1,164 @@
+import { useMemo, useState } from 'react'
+import type { SpellData } from '../../api/types'
+import { formatBonus } from '../../domain/derive'
+import { spellPools } from '../../domain/spells'
+import { ABILITY_LABEL } from '../../domain/srd'
+import { Chip, Markdown, Notice, Section } from '../ui'
+import type { StepProps } from './types'
+
+const levelLabel = (level: number) => (level === 0 ? 'Truque' : `Nível ${level}`)
+
+export function SpellRow({ spell, extra }: { spell: SpellData; extra?: React.ReactNode }) {
+  return (
+    <details className="spell-details">
+      <summary>
+        <span className="spell-name">{spell.name}</span>
+        <span className="spell-meta">
+          {levelLabel(spell.level)} · {spell.school}
+        </span>
+        {spell.concentration && <Chip tone="warn">Conc.</Chip>}
+        {spell.ritual && <Chip>Ritual</Chip>}
+        {extra}
+      </summary>
+      <div className="spell-body">
+        <p className="muted">
+          {spell.casting_time} · {spell.range} · {[spell.components.verbal && 'V', spell.components.somatic && 'S', spell.components.material && `M (${spell.components.material_description ?? ''})`].filter(Boolean).join(', ')} · {spell.duration}
+        </p>
+        <Markdown>{spell.description}</Markdown>
+        {spell.higher_levels && <Markdown>{`**Em níveis mais altos.** ${spell.higher_levels}`}</Markdown>}
+      </div>
+    </details>
+  )
+}
+
+function SpellPicker({ title, hint, spells, selected, limit, onChange }: { title: string; hint?: string; spells: SpellData[]; selected: string[]; limit: number; onChange: (next: string[]) => void }) {
+  const [query, setQuery] = useState('')
+  const [level, setLevel] = useState('all')
+  const levels = useMemo(() => [...new Set(spells.map((s) => s.level))].sort((a, b) => a - b), [spells])
+  const visible = spells.filter((s) => (level === 'all' || s.level === Number(level)) && s.name.toLowerCase().includes(query.trim().toLowerCase()))
+  const full = selected.length >= limit
+
+  return (
+    <Section title={title} hint={hint} count={{ current: selected.length, needed: limit }}>
+      <div className="picker-tools">
+        <input type="search" placeholder="Buscar magia…" aria-label={`Buscar em ${title}`} value={query} onChange={(e) => setQuery(e.target.value)} />
+        {levels.length > 1 && (
+          <select aria-label={`Filtrar ${title} por nível`} value={level} onChange={(e) => setLevel(e.target.value)}>
+            <option value="all">Todos os níveis</option>
+            {levels.map((l) => (
+              <option key={l} value={l}>
+                {levelLabel(l)}
+              </option>
+            ))}
+          </select>
+        )}
+      </div>
+      {selected.length > 0 && (
+        <p className="selected-line">
+          Escolhidas: {selected.map((slug) => spells.find((s) => s.slug === slug)?.name ?? slug).join(', ')}
+        </p>
+      )}
+      <ul className="spell-list">
+        {visible.map((spell) => {
+          const checked = selected.includes(spell.slug)
+          return (
+            <li key={spell.slug} className={checked ? 'picked' : ''}>
+              <input
+                type="checkbox"
+                aria-label={`Escolher ${spell.name}`}
+                checked={checked}
+                disabled={!checked && full}
+                onChange={() => onChange(checked ? selected.filter((s) => s !== spell.slug) : [...selected, spell.slug])}
+              />
+              <SpellRow spell={spell} />
+            </li>
+          )
+        })}
+        {visible.length === 0 && <li className="muted">Nenhuma magia encontrada.</li>}
+      </ul>
+    </Section>
+  )
+}
+
+export function SpellsStep({ character, derived, catalog, change }: StepProps) {
+  const { plan, spellcasting } = derived
+  const casting = plan.casting
+  const pools = spellPools(character, plan, catalog)
+  const others = derived.spells.filter((s) => s.sources.some((src) => !['Classe', 'Preparada', 'Grimório', 'Arcana Mística'].includes(src) && !src.startsWith('Guerreiro')))
+
+  if (!plan.cls) return <Notice>Escolha uma classe para ver as magias dela.</Notice>
+
+  return (
+    <div className="step">
+      <h2>Magias</h2>
+      {!plan.row?.spellcasting ? (
+        <Notice>{plan.cls.name} não conjura magias neste nível. Se sua espécie ou algum talento concede magias, elas aparecem abaixo e na ficha.</Notice>
+      ) : (
+        <>
+          <p className="lead">
+            Atributo de conjuração: <strong>{casting.ability ? ABILITY_LABEL[casting.ability] : '—'}</strong>
+            {spellcasting?.dc != null && (
+              <>
+                {' · '}CD de resistência <strong>{spellcasting.dc}</strong>
+                {' · '}Ataque de magia <strong>{formatBonus(spellcasting.attack ?? 0)}</strong>
+              </>
+            )}
+          </p>
+          <p className="muted">
+            {casting.pact ? `Espaços de Magia de Pacto: ${casting.pact.count} de nível ${casting.pact.level}.` : `Espaços: ${Object.entries(casting.slots).map(([lvl, n]) => `${n}× nível ${lvl}`).join(' · ') || 'nenhum ainda'}.`}
+          </p>
+
+          {casting.cantrips > 0 && (
+            <SpellPicker title="Truques" spells={pools.cantrips} selected={character.spells.cantrips} limit={casting.cantrips} onChange={(cantrips) => change((c) => ({ ...c, spells: { ...c.spells, cantrips } }))} />
+          )}
+
+          {casting.spellbook > 0 && (
+            <SpellPicker
+              title="Grimório"
+              hint={`Seu grimório começa com 6 magias e ganha 2 a cada nível. Só entram magias de níveis para os quais você tem espaços (até o nível ${casting.maxSpellLevel}).`}
+              spells={pools.spellbook}
+              selected={character.spells.spellbook}
+              limit={casting.spellbook}
+              onChange={(spellbook) => change((c) => ({ ...c, spells: { ...c.spells, spellbook } }))}
+            />
+          )}
+
+          {casting.prepared > 0 && (
+            <SpellPicker
+              title="Magias preparadas"
+              hint={plan.cls.slug === 'wizard' ? 'Prepare magias do seu grimório. Você pode trocá-las após cada Descanso Longo.' : `Magias de nível 1 a ${casting.maxSpellLevel} da lista de ${plan.cls.name}. Você pode trocá-las após cada Descanso Longo.`}
+              spells={pools.prepared}
+              selected={character.spells.prepared}
+              limit={casting.prepared}
+              onChange={(prepared) => change((c) => ({ ...c, spells: { ...c.spells, prepared } }))}
+            />
+          )}
+
+          {casting.arcanumLevels.map((lvl) => (
+            <SpellPicker
+              key={lvl}
+              title={`Arcana Mística (nível ${lvl})`}
+              hint="Uma vez por Descanso Longo, sem gastar espaço de magia."
+              spells={pools.arcanum[lvl] ?? []}
+              selected={character.spells.arcanum[String(lvl)] ? [character.spells.arcanum[String(lvl)]!] : []}
+              limit={1}
+              onChange={(next) => change((c) => ({ ...c, spells: { ...c.spells, arcanum: { ...c.spells.arcanum, [String(lvl)]: next[0] ?? '' } } }))}
+            />
+          ))}
+        </>
+      )}
+
+      {others.length > 0 && (
+        <Section title="Magias de outras fontes" hint="Concedidas pela espécie, subclasse ou talentos.">
+          <ul className="spell-list">
+            {others.map((entry) => (
+              <li key={entry.spell.slug}>
+                <SpellRow spell={entry.spell} extra={<span className="muted">{entry.sources.join(', ')}</span>} />
+              </li>
+            ))}
+          </ul>
+        </Section>
+      )}
+    </div>
+  )
+}

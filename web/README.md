@@ -1,0 +1,86 @@
+# Montador de Ficha D&D 5e (regras de 2024)
+
+Site em **React + TypeScript + Vite** que monta fichas de personagem passo a passo, usando a API de catálogo do SRD 5.2.1 deste repositório como única fonte das regras. Não há servidor próprio nem contas: as fichas ficam no navegador (`localStorage`) e podem ser exportadas/importadas como arquivo JSON.
+
+## Como rodar
+
+Em dois terminais, a partir da raiz do repositório:
+
+```bash
+# 1. API de catálogo (veja o README da raiz)
+uvicorn main_api:app --port 8000
+
+# 2. Site, em modo de desenvolvimento
+cd web
+npm install
+npm run dev          # http://localhost:5173
+```
+
+O Vite encaminha `/api` para `http://localhost:8000`. Para apontar para outra API: `VITE_API_PROXY=http://outro-host:8000 npm run dev`.
+
+## Como publicar
+
+**Opção 1 — um único processo.** Compile o site e deixe a própria API servi-lo:
+
+```bash
+cd web && npm install && npm run build
+cd .. && uvicorn main_api:app --host 0.0.0.0 --port 8000   # site em /, API em /api/v1, docs em /docs
+```
+
+Se a pasta `web/dist` existe, a API a serve em `/` (veja `mount_web_app` em `main_api.py`).
+
+**Opção 2 — site em hospedagem estática** (Netlify, GitHub Pages, S3...) e API em outro endereço:
+
+```bash
+VITE_API_BASE=https://api.meusite.com npm run build   # publique a pasta dist/
+```
+
+A API já libera CORS para qualquer origem (somente leitura).
+
+## Testes e verificação
+
+```bash
+npm test            # Vitest: regras, cálculos e validação (76 testes)
+npm run typecheck   # TypeScript
+npm run build       # typecheck + build de produção
+```
+
+Os testes usam um catálogo congelado em `src/test/catalog.fixture.json`, gerado pela própria API (`python scripts/export_catalog_fixture.py`, na raiz) — rode de novo se o catálogo mudar. Um teste de estresse (`matrix.test.ts`) preenche automaticamente **toda classe em 13 níveis e toda combinação de espécie × antecedente** e exige que nenhuma fique com pendências nem com valores impossíveis.
+
+## Estrutura
+
+```
+src/
+  api/        cliente HTTP e tipos do catálogo
+  domain/     regras puras, sem React (o que mais importa)
+    plan.ts       o que o personagem precisa escolher, dado classe/nível/espécie/antecedente
+    derive.ts     todos os cálculos da ficha (atributos, PV, CA, perícias, ataques, magias...)
+    validation.ts pendências por etapa;  prune.ts remove escolhas que deixaram de valer
+    autofill.ts   "Preencher o que falta";  equipment.ts inventário;  feats.ts, spells.ts
+  components/ assistente (steps/), ficha (Sheet.tsx), lista de personagens (Home.tsx)
+  state/      armazenamento local, exportar/importar
+```
+
+## O que está implementado
+
+- **Nível 1 a 20** de uma classe (as 12 do SRD), com subclasse, aumentos de atributo/talentos por nível e Dádivas Épicas.
+- **Atributos:** Matriz Padrão, Compra de Pontos (27) e Manual; aumentos do antecedente (+2/+1 ou +1/+1/+1).
+- **Espécie:** linhagem/ancestralidade (Elfo, Gnomo, Tiefling, Dragonato, Golias), tamanho, perícia (Humano, Elfo), atributo de conjuração; velocidade e visão no escuro da linhagem; Anão (+1 PV por nível).
+- **Escolhas de classe:** perícias, ferramentas, especialização (Ladino, Bardo, Patrulheiro, Mago), Ordem Divina/Primal, Estilo de Luta (com Guerreiro Abençoado/Druídico), Maestria de Arma, Invocações Místicas, Metamagia.
+- **Talentos:** Aumento de Atributo, Magic Initiate, Skilled, +1 de atributo; efeitos numéricos de Alert, Tough, Defense e Archery.
+- **Magias:** truques, magias preparadas, grimório do Mago, Arcana Mística do Bruxo, espaços (inclusive Magia de Pacto), CD e ataque; magias de subclasse, espécie e talentos.
+- **Cálculos:** PV (valor médio), CA (armadura, escudo, Defesa sem Armadura do Bárbaro e do Monge, Resiliência Dracônica), iniciativa, velocidade (Movimento Rápido, Movimento sem Armadura, penalidade por Força), perícias (meia proficiência do Bardo), salvaguardas, ataques e dano (acuidade, maestria), proficiências, peso e ouro.
+- **Equipamento:** opções A/B/C da classe e do antecedente, inventário editável, equipar armaduras e armas.
+- **Ficha:** completa, para imprimir/PDF (abre as seções recolhidas), modo escuro, funciona no celular; exportar/importar JSON, duplicar, excluir.
+
+## Limitações conhecidas
+
+- **Sem multiclasse** e sem rolagem de PV (usa o valor médio).
+- Características que dependem de regras mais finas aparecem como **texto e recursos de classe**, mas não alteram os cálculos (ex.: dano do Ataque Furtivo, Fúria, Elemental Affinity, Hunter's Mark, ancestralidade do Golias). Só os efeitos listados acima são automáticos.
+- `Spellbook` e `Arcane Focus` entram no inventário como texto: o SRD não os descreve na tabela de equipamentos.
+- Os textos das regras estão em **inglês**, como no SRD; só a interface está em português.
+- Não há contas nem sincronização: se limpar os dados do navegador, as fichas somem. Exporte para guardar cópias.
+
+## Atribuição
+
+O site exibe, no rodapé e na ficha, o texto de atribuição exigido pela licença CC-BY 4.0 do SRD 5.2.1 (retornado também por `GET /api/v1/about`). Mantenha-o em qualquer publicação.
