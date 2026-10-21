@@ -38,6 +38,9 @@ jobs:
         working-directory: web
         env:
           VITE_STATIC_DATA: '1'
+          # Endereço do servidor de contas (Settings → Secrets and variables → Actions → Variables → ACCOUNTS_URL).
+          # Sem ele, o site publicado funciona só com fichas locais.
+          VITE_ACCOUNTS_URL: ${{ vars.ACCOUNTS_URL }}
         run: |
           npm ci
           npm test

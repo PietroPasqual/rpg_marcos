@@ -43,6 +43,34 @@ A Wizards pede que não seja incluída nenhuma outra atribuição a ela; é perm
 
 Limitações conhecidas dos dados: tabelas do glossário (ex.: *Damage Types*, *Carrying Capacity*) não são extraídas, só o texto; o número de usos de Ações Lendárias dos monstros não existe no dataset de origem; algumas descrições curtas de montarias, veículos e munições foram escritas pelo Open5e e não pelo SRD.
 
+## Contas e sincronização de fichas (opcional)
+
+O mesmo servidor FastAPI oferece cadastro/login por **e-mail e senha** e guarda as fichas de cada pessoa (`accounts.py`). É um recurso à parte do catálogo: usa **outro banco** (`ACCOUNTS_DATABASE_URL`, padrão `./dnd5e_accounts.db`), que nunca é recriado quando o catálogo é reimportado. Sem ele, o site continua funcionando com fichas só no navegador.
+
+| Rota | O que faz |
+|---|---|
+| `GET /api/v1/auth/status` | contas disponíveis? cadastro aberto? |
+| `POST /api/v1/auth/register`, `/auth/login` | devolvem um token (`Authorization: Bearer …`, validade de 30 dias) |
+| `GET /api/v1/auth/me` · `DELETE /api/v1/auth/me` | dados da conta · excluir conta e fichas (exige a senha) |
+| `POST /api/v1/auth/change-password` · `/auth/logout-all` | trocar a senha / encerrar todos os logins |
+| `GET /api/v1/sync/characters` | todas as fichas da conta, inclusive marcadores de exclusão |
+| `PUT /api/v1/sync/characters/{id}` | grava a ficha; se o servidor tiver uma mais recente, responde 409 |
+| `DELETE /api/v1/sync/characters/{id}?deleted_at=…` | marca a ficha como excluída |
+
+No site, a tela **Conta** (`#/conta`) faz o login e a sincronização acontece sozinha: ao abrir, ao editar, ao voltar a ficar online e ao voltar para a aba. **A edição mais recente vence** (pelo `updatedAt` da ficha) e exclusões viajam como marcadores, então apagar em um aparelho apaga nos outros.
+
+Configuração (variáveis de ambiente do servidor):
+
+* `ACCOUNTS_DATABASE_URL`: banco das contas (SQLite ou Postgres).
+* `ACCOUNTS_SECRET`: segredo que assina os tokens. Sem ele, um segredo é gerado e guardado no banco das contas. Em produção, defina um valor longo e aleatório.
+* `ACCOUNTS_REGISTRATION=closed`: fecha novos cadastros (útil para uso pessoal depois de criar a sua conta).
+* `ACCOUNTS_TRUST_PROXY=1`: atrás de proxy reverso, usa o `X-Forwarded-For` nos limites de tentativas por IP.
+* `ACCOUNTS_TOKEN_DAYS`: validade do token (padrão 30).
+
+Segurança: senhas com scrypt (nunca guardadas em texto), tokens JWT assinados com verificação de versão (trocar a senha ou "sair em todos os aparelhos" invalida os anteriores), limite de tentativas de login/cadastro, isolamento total entre contas e limites de tamanho e quantidade de fichas. **Não há recuperação de senha por e-mail** (o servidor não envia e-mails); use `POST /auth/change-password` estando logado e guarde a senha. Use sempre HTTPS na internet.
+
+Para o site no GitHub Pages usar um servidor de contas, publique este servidor em algum lugar com HTTPS (o `Dockerfile` está pronto) e defina a variável de repositório `ACCOUNTS_URL` (Settings → Secrets and variables → Actions → Variables) com o endereço dele, sem barra no final. Sem essa variável, o site publicado esconde o login.
+
 ## Montador de ficha e Livro de Regras (site)
 
 A pasta [`web/`](web/README.md) contém um site em React que monta fichas de personagem passo a passo (classe, origem, atributos, escolhas, magias, equipamento e ficha final para imprimir) e traz um **Livro de Regras** navegável (texto das regras, classes, magias, equipamento, itens mágicos, monstros, com busca) usando esta API. Para vê-lo funcionando:

@@ -49,7 +49,7 @@ O workflow `.github/workflows/pages.yml` faz isso a cada push na `main`; ative e
 ## Testes e verificação
 
 ```bash
-npm test            # Vitest: regras, cálculos e validação (117 testes)
+npm test            # Vitest: regras, cálculos e validação (127 testes)
 npm run typecheck   # TypeScript
 npm run build       # typecheck + build de produção
 ```
@@ -70,6 +70,10 @@ src/
   components/ assistente (steps/), ficha (Sheet.tsx), lista de personagens (Home.tsx)
   state/      armazenamento local, exportar/importar
 ```
+
+## Conta e sincronização (`#/conta`)
+
+Opcional: com um servidor de contas (o próprio `main_api.py`, veja o README da raiz), é possível entrar com e-mail e senha e ter as mesmas fichas em vários aparelhos. O site é *local primeiro*: funciona sem rede e sem login; ao entrar, as fichas deste navegador sobem para a conta e as da conta descem para cá (`src/state/sync.ts`, com `planSync` puro e testado). Ao sair você pode apagar as fichas locais, para computadores compartilhados. Em hospedagem estática, defina `VITE_ACCOUNTS_URL` no build; sem ela o login fica oculto.
 
 ## Livro de Regras (`#/livro`)
 
@@ -101,7 +105,8 @@ Compêndio do SRD 5.2.1 dentro do mesmo site, lendo a mesma API:
 - **Conjuração de subclasse** (Cavaleiro Místico do Guerreiro, Trapaceiro Arcano do Ladino) não tem escolhas de magia no assistente.
 - Características muito específicas continuam só como texto, sem alterar números (por exemplo Elemental Affinity além do tipo escolhido, Hunter's Mark além do dano, Divine Smite).
 - Os textos das regras estão em **inglês**, como no SRD; só a interface está em português.
-- Não há contas nem sincronização: se limpar os dados do navegador, as fichas somem. Exporte para guardar cópias.
+- Sem login, as fichas ficam só no navegador: se limpar os dados, elas somem. Exporte para guardar cópias ou crie uma conta (veja abaixo).
+- Não há recuperação de senha por e-mail; a edição mais recente vence quando a mesma ficha é alterada em dois aparelhos ao mesmo tempo.
 
 ## Atribuição
 

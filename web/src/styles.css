@@ -1637,6 +1637,48 @@ input.level-number {
   }
 }
 
+/* ---------- Conta e sincronização ---------- */
+.account {
+  max-width: 34rem;
+}
+.account-form input[type='email'],
+.account-form input[type='password'] {
+  width: 100%;
+}
+.account-form {
+  display: grid;
+  gap: 0.7rem;
+  margin: 0.75rem 0;
+}
+.account-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+.sync-dot {
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 50%;
+  background: var(--good);
+}
+.sync-syncing {
+  background: var(--warn);
+  animation: pulse 1s ease-in-out infinite;
+}
+.sync-error {
+  background: var(--danger);
+}
+@keyframes pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sync-syncing {
+    animation: none;
+  }
+}
+
 @media print {
   :root {
     --bg: #fff;

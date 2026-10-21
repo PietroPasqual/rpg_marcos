@@ -2,18 +2,22 @@ import { useCallback, useEffect, useState } from 'react'
 import { loadCatalog } from './api/client'
 import type { Catalog } from './api/types'
 import { BookApp } from './book/BookApp'
+import { accountsEnabled } from './api/accounts'
+import { Account } from './components/Account'
 import { Builder, type BuilderStep } from './components/Builder'
 import { Home } from './components/Home'
 import { Notice } from './components/ui'
 import { STEPS } from './domain/validation'
+import { startAutoSync, useSession, useSyncState } from './state/sync'
 
-type Route = { name: 'home' } | { name: 'builder'; id: string; step: BuilderStep } | { name: 'book'; segments: string[] }
+type Route = { name: 'home' } | { name: 'account' } | { name: 'builder'; id: string; step: BuilderStep } | { name: 'book'; segments: string[] }
 
 const STEP_IDS = new Set<string>([...STEPS.map((s) => s.id), 'sheet'])
 
 function parseHash(): Route {
   const [kind, id, step] = location.hash.replace(/^#\/?/, '').split('/')
   if (kind === 'livro') return { name: 'book', segments: location.hash.replace(/^#\/?livro\/?/, '').split('/').filter(Boolean).map(decodeURIComponent) }
+  if (kind === 'conta' && accountsEnabled) return { name: 'account' }
   if (kind === 'c' && id) return { name: 'builder', id, step: STEP_IDS.has(step ?? '') ? (step as BuilderStep) : 'class' }
   return { name: 'home' }
 }
@@ -36,6 +40,10 @@ export default function App() {
   const [error, setError] = useState<string | null>(null)
   const [attempt, setAttempt] = useState(0)
   const [route, go] = useRoute()
+  const session = useSession()
+  const sync = useSyncState()
+
+  useEffect(() => startAutoSync(), [])
 
   useEffect(() => {
     let cancelled = false
@@ -55,12 +63,25 @@ export default function App() {
           <span aria-hidden="true">⚔</span> Montador de Ficha D&amp;D 5e
         </a>
         <nav className="app-nav" aria-label="Principal">
-          <a href="#/" className={route.name !== 'book' ? 'active' : ''}>
+          <a href="#/" className={route.name === 'home' || route.name === 'builder' ? 'active' : ''}>
             Fichas
           </a>
           <a href="#/livro" className={route.name === 'book' ? 'active' : ''}>
             Livro de Regras
           </a>
+          {accountsEnabled && (
+            <a href="#/conta" className={`account-link ${route.name === 'account' ? 'active' : ''}`} title={session ? `Conectado como ${session.email}` : 'Entrar para sincronizar'}>
+              {session ? (
+                <>
+                  <span className={`sync-dot sync-${sync.phase}`} aria-hidden="true" />
+                  <span className="sr-only">Sincronização: {sync.phase === 'syncing' ? 'em andamento' : sync.phase === 'error' ? 'com erro' : 'em dia'}. </span>
+                  Conta
+                </>
+              ) : (
+                'Entrar'
+              )}
+            </a>
+          )}
         </nav>
       </header>
       <div className="app-content">
@@ -78,6 +99,7 @@ export default function App() {
             Carregando o catálogo de regras…
           </div>
         )}
+        {route.name === 'account' && <Account />}
         {catalog && route.name === 'home' && <Home catalog={catalog} go={go} />}
         {catalog && route.name === 'builder' && <Builder key={route.id} catalog={catalog} id={route.id} step={route.step} go={go} />}
         {catalog && route.name === 'book' && <BookApp catalog={catalog} segments={route.segments} />}

@@ -74,6 +74,7 @@ from schemas_and_models import (
     WeaponModel,
     WeaponSchema,
 )
+from accounts import router as accounts_router
 from srd_importer import ATTRIBUTION, IMPORT_VERSION, SOURCE_BOOK, SOURCE_URL, current_import_version, import_srd_catalog
 
 SchemaT = TypeVar("SchemaT")
@@ -137,9 +138,9 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
     allow_credentials=False,
-    allow_methods=["GET", "OPTIONS"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
-    expose_headers=["ETag", "Cache-Control"],
+    expose_headers=["ETag", "Cache-Control", "Retry-After", "X-Server-Updated-At"],
 )
 
 
@@ -164,6 +165,7 @@ def problem_response(
     error_type: str,
     suggestions: list[str] | None = None,
     extra: dict[str, Any] | None = None,
+    headers: dict[str, str] | None = None,
 ) -> JSONResponse:
     problem = ProblemDetailsSchema(
         type=f"https://api.dnd2024.dev/errors/{error_type}",
@@ -176,7 +178,7 @@ def problem_response(
     content = problem.model_dump()
     if extra:
         content.update(extra)
-    return JSONResponse(status_code=status, content=content, media_type="application/problem+json")
+    return JSONResponse(status_code=status, content=content, media_type="application/problem+json", headers=headers)
 
 
 @app.exception_handler(CatalogNotFoundError)
@@ -208,6 +210,7 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException) 
         detail=str(exc.detail),
         instance=str(request.url.path),
         error_type="not-found" if exc.status_code == 404 else "http-error",
+        headers=dict(exc.headers) if exc.headers else None,
     )
 
 
@@ -1110,6 +1113,13 @@ def omni_search(
         total_matches=total_matches,
         results_by_type=results_by_type,
     )
+
+
+# =====================================================================
+# 4b. CONTAS E SINCRONIZAÇÃO DE FICHAS (banco separado do catálogo; veja accounts.py)
+# =====================================================================
+
+app.include_router(accounts_router)
 
 
 # =====================================================================

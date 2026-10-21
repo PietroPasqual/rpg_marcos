@@ -1,4 +1,6 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { accountsEnabled } from '../api/accounts'
+import { useSession } from '../state/session'
 import { describeClasses } from '../domain/multiclass'
 import type { Catalog } from '../api/types'
 import { newCharacter, type Character } from '../domain/character'
@@ -10,6 +12,14 @@ export function Home({ catalog, go }: { catalog: Catalog; go: (path: string) => 
   const [error, setError] = useState<string | null>(null)
   const fileInput = useRef<HTMLInputElement>(null)
   const refresh = () => setCharacters(loadCharacters())
+  const session = useSession()
+
+  // A sincronização pode trazer ou remover fichas enquanto a lista está aberta.
+  useEffect(() => {
+    const onChanged = () => setCharacters(loadCharacters())
+    window.addEventListener('characters-changed', onChanged)
+    return () => window.removeEventListener('characters-changed', onChanged)
+  }, [])
 
   const create = () => {
     const character = newCharacter()
@@ -53,6 +63,11 @@ export function Home({ catalog, go }: { catalog: Catalog; go: (path: string) => 
       </div>
 
       {error && <Notice tone="error">{error}</Notice>}
+      {accountsEnabled && !session && (
+        <Notice>
+          Suas fichas ficam só neste navegador. <a href="#/conta">Entre ou crie uma conta</a> para sincronizá-las entre aparelhos.
+        </Notice>
+      )}
 
       {characters.length === 0 ? (
         <div className="empty">
