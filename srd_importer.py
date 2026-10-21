@@ -61,7 +61,7 @@ from schemas_and_models import (
 )
 
 # Incrementar sempre que o mapeamento mudar: bancos com outra versão são recriados no startup.
-IMPORT_VERSION = "srd-5.2.1/open5e-srd-2024/v1"
+IMPORT_VERSION = "srd-5.2.1/open5e-srd-2024/v3"
 
 DATA_DIR = Path(__file__).resolve().parent / "data" / "srd_5_2_1"
 SOURCE_BOOK = "System Reference Document 5.2.1"
@@ -139,8 +139,14 @@ XP_BY_CR = {
 LINK_MARKUP_RE = re.compile(r"\b\S+(?: \[[^\]]+\])?\|X[A-Z]+\|")
 
 
+# Palavras partidas no meio pelo PDF de origem: "Ar cane Focus", "Ar rows", "Leather Ar mor".
+BROKEN_WORD_RE = re.compile(r"\bAr (cane|rows|mor)\b")
+
+
 def clean_text(value: Any) -> Any:
-    return LINK_MARKUP_RE.sub("", value) if isinstance(value, str) else value
+    if not isinstance(value, str):
+        return value
+    return BROKEN_WORD_RE.sub(r"Ar\1", LINK_MARKUP_RE.sub("", value))
 
 
 def slugify(value: str) -> str:
@@ -264,8 +270,75 @@ def condition_references(*texts: str) -> list[dict[str, str]]:
     ]
 
 
-def parse_equipment_options(text: str) -> list[dict[str, Any]]:
-    """'(A) Greataxe, 4 Handaxes, Explorer's Pack, and 15 GP; or (B) 75 GP' -> opções A/B."""
+class ItemIndex:
+    """Resolve nomes de itens do equipamento inicial para slugs reais de armas, armaduras, ferramentas e equipamentos."""
+
+    GROUPS = {"weapons": "weapon", "armor": "armor", "tools": "tool", "gear": "gear"}
+    # Nome (slugificado) -> slug do catálogo, quando o SRD usa outro termo ou o item vem em pacote.
+    ALIASES = {
+        "arrows": "arrows-20",
+        "bolts": "bolts-20",
+        "druidic-focus-quarterstaff": "druidic-focus-wooden-staff",
+        "arcane-focus-quarterstaff": "quarterstaff",
+    }
+    # Escolhas genéricas do SRD ("a Holy Symbol", "a Musical Instrument of your choice").
+    CHOICES = {
+        "holy-symbol": ("gear", "holy-symbol-"),
+        "musical-instrument-of-your-choice": ("tool", "musical-instrument-"),
+        "gaming-set-same-as-above": ("tool", "gaming-set-"),
+    }
+
+    def __init__(self, catalog: dict[str, list[dict[str, Any]]]) -> None:
+        self.type_by_slug: dict[str, str] = {}
+        for group, item_type in self.GROUPS.items():
+            for row in catalog[group]:
+                self.type_by_slug[row["slug"]] = item_type
+        self.by_tokens = {frozenset(slug.split("-")): slug for slug in self.type_by_slug}
+
+    def _lookup(self, slug: str) -> str | None:
+        candidates = [slug, self.ALIASES.get(slug, slug)]
+        for suffix in ("s", "es"):
+            if slug.endswith(suffix):
+                candidates.append(slug[: -len(suffix)])
+        for candidate in candidates:
+            candidate = self.ALIASES.get(candidate, candidate)
+            if candidate in self.type_by_slug:
+                return candidate
+        return self.by_tokens.get(frozenset(slug.split("-")))
+
+    def resolve(self, name: str, quantity: int) -> dict[str, Any]:
+        slug = slugify(name)
+        entry: dict[str, Any] = {"item_slug": None, "item_name": name, "quantity": quantity, "item_type": None, "choose_from": []}
+        if slug in self.CHOICES or "chosen-for-the-tool-proficiency" in slug:
+            if slug in self.CHOICES:
+                item_type, prefix = self.CHOICES[slug]
+                entry["choose_from"] = sorted(s for s in self.type_by_slug if s.startswith(prefix))
+            else:  # Monge: ferramenta de artesão ou instrumento musical
+                entry["choose_from"] = sorted(
+                    s for s in self.type_by_slug
+                    if s.startswith("musical-instrument-") or s.endswith(("-supplies", "-tools", "-utensils")) and s not in {"navigators-tools", "thieves-tools"}
+                )
+            entry["item_type"] = "tool" if slug not in {"holy-symbol"} else "gear"
+            return entry
+
+        found = self._lookup(slug)
+        if found is None and "(" in name:  # "Book (prayers)", "Parchment (10 sheets)", "Arcane Focus (crystal)"
+            base = re.sub(r"\s*\(.*\)", "", name)
+            found = self._lookup(slugify(base))
+            if sheets := re.search(r"\((\d+) sheets\)", name):
+                entry["quantity"] = quantity * int(sheets.group(1))
+        if found:
+            entry["item_slug"] = found
+            entry["item_type"] = self.type_by_slug[found]
+            if pack := re.search(r"-(\d+)$", found):  # "20 Arrows" = 1 pacote "arrows-20"
+                size = int(pack.group(1))
+                if quantity % size == 0:
+                    entry["quantity"] = quantity // size
+        return entry
+
+
+def parse_equipment_options(text: str, index: "ItemIndex | None" = None) -> list[dict[str, Any]]:
+    """'(A) Greataxe, 4 Handaxes, Explorer's Pack, and 15 GP; or (B) 75 GP' -> opções A/B com itens resolvidos."""
     options: list[dict[str, Any]] = []
     for label, body in re.findall(r"\(([A-Z])\)\s*(.+?)(?=;\s*(?:or\s+)?\([A-Z]\)|$)", text or ""):
         gold = 0
@@ -278,7 +351,11 @@ def parse_equipment_options(text: str) -> list[dict[str, Any]]:
                 continue
             qty = re.match(r"^(\d+)\s+(.+)$", part)
             name = qty.group(2) if qty else part
-            items.append({"item_slug": slugify(name), "item_name": name, "quantity": int(qty.group(1)) if qty else 1})
+            quantity = int(qty.group(1)) if qty else 1
+            if index is None:
+                items.append({"item_slug": slugify(name), "item_name": name, "quantity": quantity, "item_type": None, "choose_from": []})
+            else:
+                items.append(index.resolve(name, quantity))
         options.append({"option_label": label, "items": items, "gold_gp": gold})
     return options
 
@@ -397,7 +474,7 @@ def build_feats(src: SrdSource) -> list[dict[str, Any]]:
     return feats
 
 
-def build_backgrounds(src: SrdSource) -> list[dict[str, Any]]:
+def build_backgrounds(src: SrdSource, index: ItemIndex) -> list[dict[str, Any]]:
     benefits = src.children("BackgroundBenefit")
     backgrounds: list[dict[str, Any]] = []
     for bg in src.records("Background"):
@@ -413,10 +490,36 @@ def build_backgrounds(src: SrdSource) -> list[dict[str, Any]]:
             "skill_proficiencies": [normalize_skill(s) for s in split_list(by_type["skill_proficiency"])],
             "tool_proficiency": tool,
             "tool_slug": slugify(re.sub(r"\s*\(.*\)$", "", tool)) or None,
-            "equipment_options": parse_equipment_options(by_type.get("equipment", "")),
+            "equipment_options": parse_equipment_options(by_type.get("equipment", ""), index),
             "description": bg["desc"] or "",
         })
     return backgrounds
+
+
+def _text_lineages(trait: dict[str, Any]) -> tuple[str | None, list[dict[str, Any]]]:
+    """Opções de escolha descritas fora de tabelas de nível: parágrafos em negrito (Gnomo), lista (Golias) ou tabela Dragon (Dragonato)."""
+    desc = trait["desc"]
+    lineages: list[dict[str, Any]] = []
+
+    def lineage(name: str, text: str) -> dict[str, Any]:
+        spells = list(dict.fromkeys(slugify(m) for m in re.findall(r"\*([A-Z][^*]+?)\*", text)))
+        return {
+            "slug": slugify(re.sub(r"\s*\(.*\)$", "", name)),
+            "name": name,
+            "description": text,
+            "benefits_by_level": [{"character_level": 1, "description": text, "granted_spells": spells}],
+        }
+
+    for table in parse_markdown_tables(desc):
+        if table["headers"][:2] == ["Dragon", "Damage Type"]:
+            for dragon, damage in table["rows"]:
+                lineages.append(lineage(dragon, f"Damage Type: {damage}. Your Breath Weapon and Damage Resistance use {damage} damage."))
+            return table["caption"] or trait["name"], lineages
+
+    for m in re.finditer(r"(?:^|\n)(?:- )?\*\*(?P<name>[^*\n]+?)\.?\*\*\.?\s+(?P<text>.+?)(?=\n\n|\n- \*\*|$)", desc, re.S):
+        if not m.group("name").startswith("Table:"):
+            lineages.append(lineage(m.group("name").strip(), m.group("text").strip()))
+    return (trait["name"] if lineages else None), lineages
 
 
 def build_species(src: SrdSource) -> list[dict[str, Any]]:
@@ -460,6 +563,10 @@ def build_species(src: SrdSource) -> list[dict[str, Any]]:
                         "description": row[1] if len(row) > 1 else "",
                         "benefits_by_level": benefits,
                     })
+            if not lineages:
+                title, found = _text_lineages(t)
+                if found:
+                    lineage_title, lineages = title, found
             trait_list.append({"slug": slugify(t["name"]), "name": t["name"], "description": t["desc"]})
         speed = re.search(r"(\d+)", speed_desc)
         species.append({
@@ -521,7 +628,7 @@ def _column_value(value: str) -> int | str:
     return int(value) if re.fullmatch(r"\d+", value) else value
 
 
-def build_classes(src: SrdSource) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+def build_classes(src: SrdSource, index: ItemIndex) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
     all_classes = src.records("CharacterClass")
     features_by_parent = src.children("ClassFeature")
     items_by_feature = src.children("ClassFeatureItem")
@@ -660,7 +767,7 @@ def build_classes(src: SrdSource) -> tuple[list[dict[str, Any]], list[dict[str, 
             "weapon_proficiencies": [core["Weapon Proficiencies"]] if core.get("Weapon Proficiencies") else [],
             "tool_proficiencies": [core["Tool Proficiencies"]] if core.get("Tool Proficiencies") else [],
             "armor_training": [] if core.get("Armor Training", "None") == "None" else [core["Armor Training"]],
-            "starting_equipment_options": parse_equipment_options(core.get("Starting Equipment", "")),
+            "starting_equipment_options": parse_equipment_options(core.get("Starting Equipment", ""), index),
             "multiclassing": _parse_multiclass(multiclass_text.get(slug, ""), primary),
             "spellcasting_ability": spell_ability,
             "spellcasting_focus_type": focus,
@@ -1064,9 +1171,11 @@ ENTITY_PIPELINE: list[tuple[str, Any, type[BaseModel]]] = [
 
 def build_catalog(data_dir: Path = DATA_DIR) -> dict[str, list[dict[str, Any]]]:
     src = SrdSource(data_dir)
-    classes, subclasses, options = build_classes(src)
     weapons, masteries = build_weapons(src)
+    armor = build_armor(src)
     tools, gear = build_tools_and_gear(src)
+    index = ItemIndex({"weapons": weapons, "armor": armor, "tools": tools, "gear": gear})
+    classes, subclasses, options = build_classes(src, index)
     return {
         "weapon_masteries": masteries,
         "feats": build_feats(src),
@@ -1074,10 +1183,10 @@ def build_catalog(data_dir: Path = DATA_DIR) -> dict[str, list[dict[str, Any]]]:
         "subclasses": subclasses,
         "class_feature_options": options,
         "species": build_species(src),
-        "backgrounds": build_backgrounds(src),
+        "backgrounds": build_backgrounds(src, index),
         "spells": build_spells(src),
         "weapons": weapons,
-        "armor": build_armor(src),
+        "armor": armor,
         "tools": tools,
         "gear": gear,
         "magic_items": build_magic_items(src),

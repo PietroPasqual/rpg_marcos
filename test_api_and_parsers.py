@@ -11,6 +11,7 @@ from main_api import SessionLocal, app, init_db_and_seed
 from schemas_and_models import CatalogMetadataModel
 from srd_importer import (
     IMPORT_VERSION,
+    ItemIndex,
     build_catalog,
     clean_text,
     cost_from_gp,
@@ -43,10 +44,30 @@ def test_equipment_options_with_quantities_and_three_choices() -> None:
         "Choose A, B, or C: (A) Chain Mail, 8 Javelins, Dungeoneer's Pack, and 4 GP; (B) Book (prayers), 11 GP; or (C) 155 GP"
     )
     assert [o["option_label"] for o in options] == ["A", "B", "C"]
-    assert options[0]["items"][1] == {"item_slug": "javelins", "item_name": "Javelins", "quantity": 8}
+    assert options[0]["items"][1] == {"item_slug": "javelins", "item_name": "Javelins", "quantity": 8, "item_type": None, "choose_from": []}
     assert options[0]["gold_gp"] == 4
     assert options[1]["items"][0]["item_name"] == "Book (prayers)"
     assert options[2] == {"option_label": "C", "items": [], "gold_gp": 155}
+
+
+def test_item_index_resolves_plurals_packs_and_generic_choices() -> None:
+    index = ItemIndex({
+        "weapons": [{"slug": "handaxe"}, {"slug": "dagger"}, {"slug": "quarterstaff"}],
+        "armor": [{"slug": "leather-armor"}],
+        "tools": [{"slug": "musical-instrument-lute"}, {"slug": "musical-instrument-flute"}],
+        "gear": [{"slug": "arrows-20"}, {"slug": "clothes-travelers"}, {"slug": "book"}, {"slug": "parchment"}, {"slug": "holy-symbol-amulet"}, {"slug": "pouch"}],
+    })
+    assert index.resolve("Handaxes", 4)["item_slug"] == "handaxe"
+    assert index.resolve("Pouches", 2)["item_slug"] == "pouch"
+    assert index.resolve("Leather Armor", 1)["item_type"] == "armor"
+    assert index.resolve("Travelers' Clothes", 1)["item_slug"] == "clothes-travelers"
+    assert (index.resolve("Arrows", 20)["item_slug"], index.resolve("Arrows", 20)["quantity"]) == ("arrows-20", 1)
+    assert index.resolve("Book (prayers)", 1)["item_slug"] == "book"
+    assert index.resolve("Parchment (10 sheets)", 1)["quantity"] == 10
+    assert index.resolve("Arcane Focus (Quarterstaff)", 1)["item_slug"] == "quarterstaff"
+    assert index.resolve("Holy Symbol", 1)["choose_from"] == ["holy-symbol-amulet"]
+    assert index.resolve("Musical Instrument of your choice", 1)["choose_from"] == ["musical-instrument-flute", "musical-instrument-lute"]
+    assert index.resolve("Spellbook", 1)["item_slug"] is None
 
 
 def test_text_helpers() -> None:
@@ -96,6 +117,35 @@ def test_cross_references_point_to_existing_records() -> None:
         assert set(rule["see_also_slugs"]) <= slugs["rules"], rule["slug"]
         assert all(ref["slug"] in slugs["rules"] for ref in rule.get("referenced_entities", []))
     assert "XPHB" not in str(CATALOG)
+
+
+def test_starting_equipment_resolves_to_catalog_items() -> None:
+    catalog_slugs = {r["slug"] for key in ("weapons", "armor", "tools", "gear") for r in CATALOG[key]}
+    unresolved = set()
+    for owner in CATALOG["classes"] + CATALOG["backgrounds"]:
+        for option in owner.get("starting_equipment_options") or owner["equipment_options"]:
+            for item in option["items"]:
+                if item["choose_from"]:
+                    assert set(item["choose_from"]) <= catalog_slugs, item
+                elif item["item_slug"] is None:
+                    unresolved.add(item["item_name"])
+                else:
+                    assert item["item_slug"] in catalog_slugs, item
+                    assert item["item_type"] in {"weapon", "armor", "tool", "gear"}
+    # Itens que o SRD cita mas não descreve na tabela de equipamentos
+    assert unresolved == {"Spellbook", "Arcane Focus (crystal)", "Arcane Focus (orb)"}
+
+
+def test_species_choices_are_exposed_as_lineages() -> None:
+    species = {sp["slug"]: sp for sp in CATALOG["species"]}
+    assert [lin["slug"] for lin in species["gnome"]["lineages"]] == ["forest-gnome", "rock-gnome"]
+    assert species["gnome"]["lineages"][1]["benefits_by_level"][0]["granted_spells"] == ["mending", "prestidigitation"]
+    assert len(species["goliath"]["lineages"]) == 6
+    assert len(species["dragonborn"]["lineages"]) == 10
+    assert species["dragonborn"]["lineages"][0]["name"] == "Black"
+    assert [lin["slug"] for lin in species["tiefling"]["lineages"]] == ["abyssal", "chthonic", "infernal"]
+    for slug in ("dwarf", "halfling", "human", "orc"):
+        assert species[slug]["lineages"] == []
 
 
 def test_every_class_has_complete_level_table() -> None:

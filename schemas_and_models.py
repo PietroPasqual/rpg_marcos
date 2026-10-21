@@ -502,9 +502,13 @@ class SpeciesSchema(CatalogBaseSchema):
 
 
 class EquipmentItemQuantitySchema(BaseModel):
-    item_slug: str
+    """Item de uma lista de equipamento inicial, já resolvido para o catálogo quando possível."""
+
+    item_slug: str | None = Field(default=None, description="Slug do item no catálogo; nulo se o SRD não o descreve (ex.: Spellbook) ou se há escolha")
     item_name: str
     quantity: int = 1
+    item_type: str | None = Field(default=None, description="weapon, armor, tool ou gear — define a rota /api/v1/equipment/...")
+    choose_from: list[str] = Field(default_factory=list, description="Se preenchido, o jogador escolhe um destes slugs (ex.: um Holy Symbol)")
 
 
 class BackgroundEquipmentOptionSchema(BaseModel):
@@ -608,7 +612,7 @@ class ClassSchema(CatalogBaseSchema):
     weapon_proficiencies: list[str]
     tool_proficiencies: list[str] = Field(default_factory=list)
     armor_training: list[str]
-    starting_equipment_options: list[dict[str, Any]]
+    starting_equipment_options: list[BackgroundEquipmentOptionSchema]
     multiclassing: MulticlassRulesSchema
     spellcasting_ability: AbilityScoreEnum | None = None
     spellcasting_focus_type: str | None = None
