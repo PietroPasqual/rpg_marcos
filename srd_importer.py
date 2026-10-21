@@ -61,7 +61,7 @@ from schemas_and_models import (
 )
 
 # Incrementar sempre que o mapeamento mudar: bancos com outra versão são recriados no startup.
-IMPORT_VERSION = "srd-5.2.1/open5e-srd-2024/v4"
+IMPORT_VERSION = "srd-5.2.1/open5e-srd-2024/v5"
 
 DATA_DIR = Path(__file__).resolve().parent / "data" / "srd_5_2_1"
 SOURCE_BOOK = "System Reference Document 5.2.1"
@@ -433,29 +433,65 @@ def build_rules(src: SrdSource) -> list[dict[str, Any]]:
             "referenced_entities": [r for r in condition_references(description) if r["slug"] != slugify(entry["name"])],
         })
 
-    # Capítulos "Playing the Game", "Create Your Character", "Multiclassing"... (seções do Open5e)
-    rulesets = {r["pk"]: r for r in src.records("RuleSet")}
-    for ruleset in rulesets.values():
-        rules.append({
-            "slug": f"rules-{slugify(strip_key(ruleset['pk']))}",
-            "name": ruleset["name"],
-            "tag": "Rules Section",
-            "summary": first_sentence(ruleset["desc"] or ruleset["name"], 500),
-            "description": ruleset["desc"] or "",
-            "see_also_slugs": [],
-        })
-    for rule in sorted(src.records("Rule"), key=lambda r: (r["ruleset"], r["index"])):
-        chapter = rulesets[rule["ruleset"]]["name"]
-        rules.append({
-            "slug": f"rules-{slugify(strip_key(rule['pk']))}",
-            "name": f"{rule['name']} ({chapter})",
-            "tag": "Rules Section",
-            "summary": first_sentence(re.sub(r"[#*|]", "", rule["desc"]).strip() or rule["name"], 500),
-            "description": rule["desc"],
-            "see_also_slugs": [f"rules-{slugify(strip_key(rule['ruleset']))}"],
-            "referenced_entities": condition_references(rule["desc"]),
-        })
+    # Tabelas do glossário (Damage Types, Cover, Carrying Capacity...) e formatação completa vêm do extrator de livro
+    glossary_markdown = {
+        re.sub(r"\s*\[[^\]]+\]$", "", s["title"]): s["markdown"]
+        for s in src.pdf_extract["book"]
+        if s["part"] == "Rules Glossary" and s["depth"] == 4 and s["markdown"]
+    }
+    for index, rule in enumerate(rules):
+        rich = glossary_markdown.get(rule["name"])
+        if rich:
+            rule["description"] = rich
+        rule["position"] = index
+
+    rules.extend(build_book_sections(src, {r["slug"] for r in rules}))
     return rules
+
+
+def build_book_sections(src: SrdSource, taken: set[str]) -> list[dict[str, Any]]:
+    """Capítulos de regras em texto corrido (Playing the Game, Equipment, Gameplay Toolbox...), na ordem do livro."""
+    sections: list[dict[str, Any]] = []
+    slugs = set(taken)
+    stack: dict[int, str] = {}  # profundidade -> título do último ancestral, para desambiguar slugs
+    chapter: str | None = None
+    for position, section in enumerate(s for s in src.pdf_extract["book"] if s["part"] != "Rules Glossary"):
+        depth, title, part = section["depth"], section["title"], section["part"]
+        stack = {d: t for d, t in stack.items() if d < depth}
+        stack[depth] = title
+        if depth <= 2:
+            chapter = title if depth == 2 else None
+        base = f"book-{slugify(part)}-{slugify(title)}"
+        parents = [slugify(stack[d]) for d in sorted(stack) if d < depth and d >= 2]
+        slug = base
+        for candidate in (base, *[f"book-{slugify(part)}-{'-'.join(parents[i:])}-{slugify(title)}" for i in range(len(parents))]):
+            if candidate not in slugs:
+                slug = candidate
+                break
+        else:
+            n = 2
+            while f"{base}-{n}" in slugs:
+                n += 1
+            slug = f"{base}-{n}"
+        slugs.add(slug)
+        markdown = section["markdown"]
+        plain = re.sub(r"[#*>|_`-]+", " ", re.sub(r"^\|.*$", "", markdown, flags=re.M))
+        plain = re.sub(r"\s+", " ", plain).strip()
+        sections.append({
+            "slug": slug,
+            "name": title,
+            "tag": "Rules Section",
+            "part": part,
+            "chapter": chapter if depth >= 2 else None,
+            "depth": depth,
+            "position": position,
+            "page": section["page"],
+            "summary": first_sentence(plain or title, 300),
+            "description": markdown,
+            "see_also_slugs": [],
+            "referenced_entities": condition_references(markdown),
+        })
+    return sections
 
 
 def build_feats(src: SrdSource) -> list[dict[str, Any]]:

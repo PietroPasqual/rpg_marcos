@@ -19,6 +19,9 @@ from typing import Any
 
 import pymupdf
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from srd_book_extractor import extract_book  # noqa: E402
+
 GLOSSARY_FIRST_PAGE = 175  # índice 0-based da página "Rules Glossary" (página 176 do livro)
 GLOSSARY_STOP_HEADING = "Gameplay Toolbox"
 GLOSSARY_SKIP_HEADINGS = {"Rules Glossary", "Glossary Conventions", "Rules Definitions"}
@@ -172,10 +175,13 @@ def main() -> None:
             "rules_glossary": extract_glossary(doc),
             "multiclass_proficiencies": extract_multiclass(doc),
         }
+        data["book"], book_warnings = extract_book(doc)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(data, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
     missing = [k for k, v in data["multiclass_proficiencies"].items() if not v]
-    print(f"[OK] {len(data['rules_glossary'])} entradas de glossário -> {out_path}")
+    print(f"[OK] {len(data['rules_glossary'])} entradas de glossário e {len(data['book'])} seções do livro -> {out_path}")
+    for warning in book_warnings:
+        print(f"[WARN] {warning}")
     if missing:
         print(f"[WARN] Multiclasse não encontrada para: {', '.join(missing)}")
 

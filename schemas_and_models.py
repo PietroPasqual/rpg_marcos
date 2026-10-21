@@ -409,6 +409,12 @@ class CatalogMetadataModel(Base):
 class RuleGlossaryModel(CatalogMixin, Base):
     __tablename__ = "rules_glossary"
 
+    part: Mapped[str | None] = mapped_column(String(80), index=True, nullable=True)
+    chapter: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    depth: Mapped[int] = mapped_column(Integer, default=0, index=True, nullable=False)
+    position: Mapped[int] = mapped_column(Integer, default=0, index=True, nullable=False)
+    page: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
     tag: Mapped[str] = mapped_column(String(40), index=True, nullable=False)
     summary: Mapped[str] = mapped_column(Text, nullable=False)
     bullet_effects: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
@@ -826,11 +832,33 @@ class MonsterSchema(CatalogBaseSchema):
 
 
 class RuleGlossarySchema(CatalogBaseSchema):
+    part: str | None = Field(default=None, description="Parte do livro (ex.: Playing the Game); nulo nas entradas do glossário")
+    chapter: str | None = Field(default=None, description="Capítulo (título de nível 2) a que a seção pertence")
+    depth: int = Field(default=0, description="Nível do título no livro (1 parte, 2 capítulo, 3 seção, 4 subseção); 0 = glossário")
+    position: int = Field(default=0, description="Ordem de leitura no livro")
+    page: int | None = Field(default=None, description="Página no PDF do SRD 5.2.1")
     tag: RuleGlossaryTagEnum = RuleGlossaryTagEnum.GENERAL_RULE
     summary: str
     bullet_effects: list[str] = Field(default_factory=list)
     description: str
     see_also_slugs: list[str] = Field(default_factory=list)
+
+
+class RuleTocEntrySchema(BaseModel):
+    slug: str
+    name: str
+    depth: int
+    page: int | None = None
+
+
+class RuleTocPartSchema(BaseModel):
+    slug: str
+    name: str
+    sections: list[RuleTocEntrySchema]
+
+
+class RuleTocSchema(BaseModel):
+    parts: list[RuleTocPartSchema]
 
 
 class OmniSearchResultItemSchema(BaseModel):

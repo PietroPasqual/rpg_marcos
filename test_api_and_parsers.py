@@ -215,6 +215,48 @@ def test_health_about_and_classes() -> None:
     assert life["always_prepared_spells"][0]["spell_slugs"] == ["aid", "bless", "cure-wounds", "lesser-restoration"]
 
 
+def test_rulebook_toc_and_reading_order() -> None:
+    toc = client.get("/api/v1/rules/toc").json()
+    assert [p["name"] for p in toc["parts"]] == [
+        "Playing the Game", "Character Creation", "Equipment", "Spells", "Gameplay Toolbox", "Magic Items", "Monsters",
+    ]
+    assert sum(len(p["sections"]) for p in toc["parts"]) > 450
+    assert all(entry["depth"] in (1, 2, 3, 4) for p in toc["parts"] for entry in p["sections"])
+
+    toolbox = client.get("/api/v1/rules?part=Gameplay%20Toolbox&size=100").json()
+    positions = [r["position"] for r in toolbox["items"]]
+    assert positions == sorted(positions)
+    assert toolbox["items"][0]["name"] == "Travel Pace"
+    # A tabela solta no rodapé da página foi reposicionada junto da seção que a cita
+    travel = next(r for r in toolbox["items"] if r["name"] == "Travel Pace")
+    assert "| Terrain | Maximum Pace |" in travel["description"]
+    assert all(r["part"] == "Gameplay Toolbox" for r in toolbox["items"])
+
+    glossary_only = client.get("/api/v1/rules?tag=Condition&size=100").json()["items"]
+    assert all(r["part"] is None and r["depth"] == 0 for r in glossary_only)
+
+
+def test_book_tables_and_glossary_tables_are_extracted() -> None:
+    types = client.get("/api/v1/rules/damage-types").json()["description"]
+    assert "| Type | Examples |" in types and "| Acid |" in types
+    capacity = client.get("/api/v1/rules/carrying-capacity").json()["description"]
+    assert "| Small/Medium | Str. × 15 lb. | Str. × 30 lb. |" in capacity
+    modifiers = client.get("/api/v1/rules/book-playing-the-game-ability-modifiers").json()["description"]
+    assert modifiers.count("| Score | Modifier |") == 1  # tabela partida em duas colunas foi mesclada
+    assert "| 30 | +10 |" in modifiers
+    gaining = next(r for r in CATALOG["rules"] if r["name"] == "Gaining a Level")["description"]
+    assert "| Bard, Cleric, Druid, Monk, Rogue, or Warlock | 5 + Con. modifier |" in gaining
+
+
+def test_book_equipment_tables_agree_with_the_structured_catalog() -> None:
+    """O PDF e o dataset do Open5e são fontes independentes: os nomes das tabelas do livro precisam bater com o catálogo."""
+    equipment = "\n".join(r["description"] for r in CATALOG["rules"] if r.get("part") == "Equipment")
+    for key in ("weapons", "armor"):
+        missing = [item["name"] for item in CATALOG[key] if f"| {item['name']} |" not in equipment]
+        assert missing == [], (key, missing)
+    assert "XPHB" not in equipment
+
+
 def test_subclass_listing() -> None:
     everything = client.get("/api/v1/subclasses?size=100").json()
     assert everything["meta"]["total"] == 12

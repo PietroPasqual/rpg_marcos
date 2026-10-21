@@ -57,6 +57,9 @@ from schemas_and_models import (
     RuleGlossaryModel,
     RuleGlossarySchema,
     RuleGlossaryTagEnum,
+    RuleTocEntrySchema,
+    RuleTocPartSchema,
+    RuleTocSchema,
     SpeciesModel,
     SpeciesSchema,
     SpellModel,
@@ -223,6 +226,10 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 # =====================================================================
 # 3. HELPERS DE PAGINAÇÃO, CACHE HTTP (ETAG) E BUSCA POR SLUG
 # =====================================================================
+
+
+def slug_of(text: str) -> str:
+    return "-".join("".join(ch if ch.isalnum() else " " for ch in text.lower()).split())
 
 
 def like_pattern(term: str) -> str:
@@ -992,14 +999,36 @@ def list_rules(
     page: Annotated[int, Query(ge=1)] = 1,
     size: Annotated[int, Query(ge=1, le=100)] = 20,
     tag: Annotated[RuleGlossaryTagEnum | None, Query()] = None,
+    part: Annotated[str | None, Query(description="Parte do livro (ex.: Gameplay Toolbox); a lista sai na ordem de leitura")] = None,
+    chapter: Annotated[str | None, Query(description="Capítulo dentro da parte")] = None,
     q: Annotated[str | None, Query()] = None,
 ) -> PaginatedResponse[RuleGlossarySchema]:
     stmt = select(RuleGlossaryModel)
     if tag:
         stmt = stmt.where(RuleGlossaryModel.tag == tag.value)
+    if part:
+        stmt = stmt.where(func.lower(RuleGlossaryModel.part) == part.lower().strip())
+    if chapter:
+        stmt = stmt.where(func.lower(RuleGlossaryModel.chapter) == chapter.lower().strip())
     if q:
         stmt = stmt.where(or_(ilike(RuleGlossaryModel.name, q), ilike(RuleGlossaryModel.summary, q)))
-    return paginate_query(session, stmt.order_by(RuleGlossaryModel.name.asc()), page, size, RuleGlossarySchema)
+    order = (RuleGlossaryModel.position.asc(),) if part or chapter else (RuleGlossaryModel.name.asc(),)
+    return paginate_query(session, stmt.order_by(*order), page, size, RuleGlossarySchema)
+
+
+@app.get("/api/v1/rules/toc", response_model=RuleTocSchema, tags=["6. Monsters & Rules"])
+def rules_table_of_contents(session: Annotated[Session, Depends(get_db)]) -> RuleTocSchema:
+    """Índice do livro de regras: partes e seus títulos na ordem de leitura (sem o texto, que vem em /api/v1/rules?part=...)."""
+    rows = session.execute(
+        select(RuleGlossaryModel.slug, RuleGlossaryModel.name, RuleGlossaryModel.part, RuleGlossaryModel.depth, RuleGlossaryModel.page)
+        .where(RuleGlossaryModel.part.is_not(None))
+        .order_by(RuleGlossaryModel.position.asc())
+    ).all()
+    parts: dict[str, RuleTocPartSchema] = {}
+    for slug, name, part, depth, page_number in rows:
+        entry = parts.setdefault(part, RuleTocPartSchema(slug=slug_of(part), name=part, sections=[]))
+        entry.sections.append(RuleTocEntrySchema(slug=slug, name=name, depth=depth, page=page_number))
+    return RuleTocSchema(parts=list(parts.values()))
 
 
 @app.get(

@@ -5,7 +5,7 @@ This work includes material from the System Reference Document 5.2.1 ("SRD 5.2.1
 ## Origem dos arquivos
 
 * `open5e/*.json` — cópia sem alterações dos arquivos do documento `srd-2024` do projeto Open5e (https://github.com/open5e/open5e-api, pasta `data/v2/wizards-of-the-coast/srd-2024`), uma transcrição estruturada do SRD 5.2.
-* `srd_pdf_extract.json` — Glossário de Regras e proficiências de multiclasse extraídos automaticamente do PDF oficial `SRD_CC_v5.2.1.pdf` por `scripts/extract_srd_pdf.py`.
+* `srd_pdf_extract.json` — extraído automaticamente do PDF oficial `SRD_CC_v5.2.1.pdf` (`scripts/extract_srd_pdf.py`): o Glossário de Regras, as proficiências de multiclasse e os capítulos de regras em texto corrido (`book`: Playing the Game, Character Creation, Equipment, Spells, Gameplay Toolbox, Magic Items e Monsters), com títulos, negrito/itálico e tabelas em Markdown.
 
 Para atualizar: `python scripts/download_srd_data.py` (ou `python sync_srd_cli.py --download`).
 
