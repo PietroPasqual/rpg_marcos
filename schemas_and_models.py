@@ -159,6 +159,7 @@ class ClassModel(CatalogMixin, Base):
     skill_options: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
     weapon_proficiencies: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
     tool_proficiencies: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    tool_proficiency_choices: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list, nullable=False)
     armor_training: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
     starting_equipment_options: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list, nullable=False)
     multiclassing: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
@@ -236,6 +237,7 @@ class BackgroundModel(CatalogMixin, Base):
     skill_proficiencies: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
     tool_proficiency: Mapped[str] = mapped_column(String(160), nullable=False)
     tool_slug: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    tool_choose_from: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
     equipment_options: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list, nullable=False)
     description: Mapped[str] = mapped_column(Text, nullable=False)
 
@@ -407,6 +409,12 @@ class CatalogMetadataModel(Base):
 class RuleGlossaryModel(CatalogMixin, Base):
     __tablename__ = "rules_glossary"
 
+    part: Mapped[str | None] = mapped_column(String(80), index=True, nullable=True)
+    chapter: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    depth: Mapped[int] = mapped_column(Integer, default=0, index=True, nullable=False)
+    position: Mapped[int] = mapped_column(Integer, default=0, index=True, nullable=False)
+    page: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
     tag: Mapped[str] = mapped_column(String(40), index=True, nullable=False)
     summary: Mapped[str] = mapped_column(Text, nullable=False)
     bullet_effects: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
@@ -502,9 +510,21 @@ class SpeciesSchema(CatalogBaseSchema):
 
 
 class EquipmentItemQuantitySchema(BaseModel):
-    item_slug: str
+    """Item de uma lista de equipamento inicial, já resolvido para o catálogo quando possível."""
+
+    item_slug: str | None = Field(default=None, description="Slug do item no catálogo; nulo se o SRD não o descreve (ex.: Spellbook) ou se há escolha")
     item_name: str
     quantity: int = 1
+    item_type: str | None = Field(default=None, description="weapon, armor, tool ou gear — define a rota /api/v1/equipment/...")
+    choose_from: list[str] = Field(default_factory=list, description="Se preenchido, o jogador escolhe um destes slugs (ex.: um Holy Symbol)")
+
+
+class ToolProficiencyChoiceSchema(BaseModel):
+    """'Choose 3 Musical Instruments': o jogador escolhe `count` ferramentas dentre `choose_from`."""
+
+    count: int
+    label: str
+    choose_from: list[str]
 
 
 class BackgroundEquipmentOptionSchema(BaseModel):
@@ -519,7 +539,8 @@ class BackgroundSchema(CatalogBaseSchema):
     origin_feat_name: str
     skill_proficiencies: list[str] = Field(..., min_length=2, max_length=2)
     tool_proficiency: str
-    tool_slug: str | None = None
+    tool_slug: str | None = Field(default=None, description="Slug da ferramenta fixa; nulo quando há escolha (veja tool_choose_from)")
+    tool_choose_from: list[str] = Field(default_factory=list, description="Se preenchido, o jogador escolhe uma destas ferramentas")
     equipment_options: list[BackgroundEquipmentOptionSchema]
     description: str
 
@@ -607,8 +628,9 @@ class ClassSchema(CatalogBaseSchema):
     skill_options: list[str]
     weapon_proficiencies: list[str]
     tool_proficiencies: list[str] = Field(default_factory=list)
+    tool_proficiency_choices: list[ToolProficiencyChoiceSchema] = Field(default_factory=list)
     armor_training: list[str]
-    starting_equipment_options: list[dict[str, Any]]
+    starting_equipment_options: list[BackgroundEquipmentOptionSchema]
     multiclassing: MulticlassRulesSchema
     spellcasting_ability: AbilityScoreEnum | None = None
     spellcasting_focus_type: str | None = None
@@ -810,11 +832,33 @@ class MonsterSchema(CatalogBaseSchema):
 
 
 class RuleGlossarySchema(CatalogBaseSchema):
+    part: str | None = Field(default=None, description="Parte do livro (ex.: Playing the Game); nulo nas entradas do glossário")
+    chapter: str | None = Field(default=None, description="Capítulo (título de nível 2) a que a seção pertence")
+    depth: int = Field(default=0, description="Nível do título no livro (1 parte, 2 capítulo, 3 seção, 4 subseção); 0 = glossário")
+    position: int = Field(default=0, description="Ordem de leitura no livro")
+    page: int | None = Field(default=None, description="Página no PDF do SRD 5.2.1")
     tag: RuleGlossaryTagEnum = RuleGlossaryTagEnum.GENERAL_RULE
     summary: str
     bullet_effects: list[str] = Field(default_factory=list)
     description: str
     see_also_slugs: list[str] = Field(default_factory=list)
+
+
+class RuleTocEntrySchema(BaseModel):
+    slug: str
+    name: str
+    depth: int
+    page: int | None = None
+
+
+class RuleTocPartSchema(BaseModel):
+    slug: str
+    name: str
+    sections: list[RuleTocEntrySchema]
+
+
+class RuleTocSchema(BaseModel):
+    parts: list[RuleTocPartSchema]
 
 
 class OmniSearchResultItemSchema(BaseModel):

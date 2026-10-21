@@ -44,8 +44,6 @@ OPEN5E_FILES = [
     "Item",
     "ItemCategory",
     "MagicItem",
-    "Rule",
-    "RuleSet",
     "Species",
     "SpeciesTrait",
     "Spell",

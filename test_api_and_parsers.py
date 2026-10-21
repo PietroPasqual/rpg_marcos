@@ -11,6 +11,7 @@ from main_api import SessionLocal, app, init_db_and_seed
 from schemas_and_models import CatalogMetadataModel
 from srd_importer import (
     IMPORT_VERSION,
+    ItemIndex,
     build_catalog,
     clean_text,
     cost_from_gp,
@@ -43,10 +44,30 @@ def test_equipment_options_with_quantities_and_three_choices() -> None:
         "Choose A, B, or C: (A) Chain Mail, 8 Javelins, Dungeoneer's Pack, and 4 GP; (B) Book (prayers), 11 GP; or (C) 155 GP"
     )
     assert [o["option_label"] for o in options] == ["A", "B", "C"]
-    assert options[0]["items"][1] == {"item_slug": "javelins", "item_name": "Javelins", "quantity": 8}
+    assert options[0]["items"][1] == {"item_slug": "javelins", "item_name": "Javelins", "quantity": 8, "item_type": None, "choose_from": []}
     assert options[0]["gold_gp"] == 4
     assert options[1]["items"][0]["item_name"] == "Book (prayers)"
     assert options[2] == {"option_label": "C", "items": [], "gold_gp": 155}
+
+
+def test_item_index_resolves_plurals_packs_and_generic_choices() -> None:
+    index = ItemIndex({
+        "weapons": [{"slug": "handaxe"}, {"slug": "dagger"}, {"slug": "quarterstaff"}],
+        "armor": [{"slug": "leather-armor"}],
+        "tools": [{"slug": "musical-instrument-lute"}, {"slug": "musical-instrument-flute"}],
+        "gear": [{"slug": "arrows-20"}, {"slug": "clothes-travelers"}, {"slug": "book"}, {"slug": "parchment"}, {"slug": "holy-symbol-amulet"}, {"slug": "pouch"}],
+    })
+    assert index.resolve("Handaxes", 4)["item_slug"] == "handaxe"
+    assert index.resolve("Pouches", 2)["item_slug"] == "pouch"
+    assert index.resolve("Leather Armor", 1)["item_type"] == "armor"
+    assert index.resolve("Travelers' Clothes", 1)["item_slug"] == "clothes-travelers"
+    assert (index.resolve("Arrows", 20)["item_slug"], index.resolve("Arrows", 20)["quantity"]) == ("arrows-20", 1)
+    assert index.resolve("Book (prayers)", 1)["item_slug"] == "book"
+    assert index.resolve("Parchment (10 sheets)", 1)["quantity"] == 10
+    assert index.resolve("Arcane Focus (Quarterstaff)", 1)["item_slug"] == "quarterstaff"
+    assert index.resolve("Holy Symbol", 1)["choose_from"] == ["holy-symbol-amulet"]
+    assert index.resolve("Musical Instrument of your choice", 1)["choose_from"] == ["musical-instrument-flute", "musical-instrument-lute"]
+    assert index.resolve("Spellbook", 1)["item_slug"] is None
 
 
 def test_text_helpers() -> None:
@@ -98,6 +119,52 @@ def test_cross_references_point_to_existing_records() -> None:
     assert "XPHB" not in str(CATALOG)
 
 
+def test_starting_equipment_resolves_to_catalog_items() -> None:
+    catalog_slugs = {r["slug"] for key in ("weapons", "armor", "tools", "gear") for r in CATALOG[key]}
+    unresolved = set()
+    for owner in CATALOG["classes"] + CATALOG["backgrounds"]:
+        for option in owner.get("starting_equipment_options") or owner["equipment_options"]:
+            for item in option["items"]:
+                if item["choose_from"]:
+                    assert set(item["choose_from"]) <= catalog_slugs, item
+                elif item["item_slug"] is None:
+                    unresolved.add(item["item_name"])
+                else:
+                    assert item["item_slug"] in catalog_slugs, item
+                    assert item["item_type"] in {"weapon", "armor", "tool", "gear"}
+    # Itens que o SRD cita mas não descreve na tabela de equipamentos
+    assert unresolved == {"Spellbook", "Arcane Focus (crystal)", "Arcane Focus (orb)"}
+
+
+def test_tool_proficiency_choices_are_structured() -> None:
+    soldier = next(b for b in CATALOG["backgrounds"] if b["slug"] == "soldier")
+    assert soldier["tool_slug"] is None
+    assert "gaming-set-dice" in soldier["tool_choose_from"]
+    acolyte = next(b for b in CATALOG["backgrounds"] if b["slug"] == "acolyte")
+    assert (acolyte["tool_slug"], acolyte["tool_choose_from"]) == ("calligraphers-supplies", [])
+
+    classes = {c["slug"]: c for c in CATALOG["classes"]}
+    [bard_choice] = classes["bard"]["tool_proficiency_choices"]
+    assert bard_choice["count"] == 3
+    assert all(s.startswith("musical-instrument-") for s in bard_choice["choose_from"])
+    [monk_choice] = classes["monk"]["tool_proficiency_choices"]
+    assert monk_choice["count"] == 1
+    assert "smiths-tools" in monk_choice["choose_from"] and "musical-instrument-lute" in monk_choice["choose_from"]
+    assert classes["rogue"]["tool_proficiency_choices"] == []
+
+
+def test_species_choices_are_exposed_as_lineages() -> None:
+    species = {sp["slug"]: sp for sp in CATALOG["species"]}
+    assert [lin["slug"] for lin in species["gnome"]["lineages"]] == ["forest-gnome", "rock-gnome"]
+    assert species["gnome"]["lineages"][1]["benefits_by_level"][0]["granted_spells"] == ["mending", "prestidigitation"]
+    assert len(species["goliath"]["lineages"]) == 6
+    assert len(species["dragonborn"]["lineages"]) == 10
+    assert species["dragonborn"]["lineages"][0]["name"] == "Black"
+    assert [lin["slug"] for lin in species["tiefling"]["lineages"]] == ["abyssal", "chthonic", "infernal"]
+    for slug in ("dwarf", "halfling", "human", "orc"):
+        assert species[slug]["lineages"] == []
+
+
 def test_every_class_has_complete_level_table() -> None:
     for cls in CATALOG["classes"]:
         assert [row["level"] for row in cls["level_table"]] == list(range(1, 21)), cls["slug"]
@@ -146,6 +213,60 @@ def test_health_about_and_classes() -> None:
 
     life = client.get("/api/v1/subclasses/life-domain").json()
     assert life["always_prepared_spells"][0]["spell_slugs"] == ["aid", "bless", "cure-wounds", "lesser-restoration"]
+
+
+def test_rulebook_toc_and_reading_order() -> None:
+    toc = client.get("/api/v1/rules/toc").json()
+    assert [p["name"] for p in toc["parts"]] == [
+        "Playing the Game", "Character Creation", "Equipment", "Spells", "Gameplay Toolbox", "Magic Items", "Monsters",
+    ]
+    assert sum(len(p["sections"]) for p in toc["parts"]) > 450
+    assert all(entry["depth"] in (1, 2, 3, 4) for p in toc["parts"] for entry in p["sections"])
+
+    toolbox = client.get("/api/v1/rules?part=Gameplay%20Toolbox&size=100").json()
+    positions = [r["position"] for r in toolbox["items"]]
+    assert positions == sorted(positions)
+    assert toolbox["items"][0]["name"] == "Travel Pace"
+    # A tabela solta no rodapé da página foi reposicionada junto da seção que a cita
+    travel = next(r for r in toolbox["items"] if r["name"] == "Travel Pace")
+    assert "| Terrain | Maximum Pace |" in travel["description"]
+    assert all(r["part"] == "Gameplay Toolbox" for r in toolbox["items"])
+
+    assert client.get("/api/v1/rules?book=true&size=1").json()["meta"]["total"] == len([r for r in CATALOG["rules"] if r.get("part")])
+    assert client.get("/api/v1/rules?book=false&size=1").json()["meta"]["total"] == 155
+    rings = client.get("/api/v1/magic-items?item_category=ring&size=100").json()
+    assert rings["meta"]["total"] == 22 and all(i["item_category"] == "Ring" for i in rings["items"])
+
+    glossary_only = client.get("/api/v1/rules?tag=Condition&size=100").json()["items"]
+    assert all(r["part"] is None and r["depth"] == 0 for r in glossary_only)
+
+
+def test_book_tables_and_glossary_tables_are_extracted() -> None:
+    types = client.get("/api/v1/rules/damage-types").json()["description"]
+    assert "| Type | Examples |" in types and "| Acid |" in types
+    capacity = client.get("/api/v1/rules/carrying-capacity").json()["description"]
+    assert "| Small/Medium | Str. × 15 lb. | Str. × 30 lb. |" in capacity
+    modifiers = client.get("/api/v1/rules/book-playing-the-game-ability-modifiers").json()["description"]
+    assert modifiers.count("| Score | Modifier |") == 1  # tabela partida em duas colunas foi mesclada
+    assert "| 30 | +10 |" in modifiers
+    gaining = next(r for r in CATALOG["rules"] if r["name"] == "Gaining a Level")["description"]
+    assert "| Bard, Cleric, Druid, Monk, Rogue, or Warlock | 5 + Con. modifier |" in gaining
+
+
+def test_book_equipment_tables_agree_with_the_structured_catalog() -> None:
+    """O PDF e o dataset do Open5e são fontes independentes: os nomes das tabelas do livro precisam bater com o catálogo."""
+    equipment = "\n".join(r["description"] for r in CATALOG["rules"] if r.get("part") == "Equipment")
+    for key in ("weapons", "armor"):
+        missing = [item["name"] for item in CATALOG[key] if f"| {item['name']} |" not in equipment]
+        assert missing == [], (key, missing)
+    assert "XPHB" not in equipment
+
+
+def test_subclass_listing() -> None:
+    everything = client.get("/api/v1/subclasses?size=100").json()
+    assert everything["meta"]["total"] == 12
+    wizard = client.get("/api/v1/subclasses?class_slug=wizard").json()
+    assert [s["slug"] for s in wizard["items"]] == ["evoker"]
 
 
 def test_origins_and_feats() -> None:
@@ -326,6 +447,32 @@ def test_like_wildcards_are_literal_and_search_covers_all_types() -> None:
     assert search["results_by_type"]["magic_items"][0]["api_path"] == "/api/v1/magic-items/bag-of-holding"
 
     assert client.get("/api/v1/search?q=%20%20%20").status_code == 422
+
+
+def test_built_web_app_is_served_without_shadowing_the_api(tmp_path) -> None:
+    from pathlib import Path
+
+    from fastapi import FastAPI
+
+    from main_api import mount_web_app
+
+    dist = tmp_path / "dist"
+    dist.mkdir()
+    (dist / "index.html").write_text("<title>site</title>")
+    probe = FastAPI()
+
+    @probe.get("/api/v1/ping")
+    def ping() -> dict[str, str]:
+        return {"ok": "api"}
+
+    assert mount_web_app(probe, dist) is True
+    site = TestClient(probe)
+    assert site.get("/").text == "<title>site</title>"
+    assert site.get("/api/v1/ping").json() == {"ok": "api"}  # a API não é sobreposta pelo site
+    assert mount_web_app(FastAPI(), Path(tmp_path / "nao-existe")) is False
+    # A API real continua respondendo em /health e /docs, com ou sem site compilado
+    assert client.get("/health").status_code == 200
+    assert client.get("/docs").status_code == 200
 
 
 def test_cors_allows_public_read_only_access() -> None:
