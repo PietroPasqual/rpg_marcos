@@ -70,8 +70,9 @@ export function Sheet({ character, derived, catalog, issues, onGoto }: Props) {
       <header className="sheet-header">
         <h1>{character.name || 'Personagem sem nome'}</h1>
         <p>
-          {plan.cls ? `${plan.cls.name} ${character.level}` : 'Sem classe'}
-          {plan.subclass && ` (${plan.subclass.name})`}
+          {plan.classes.length > 0
+            ? plan.classes.map((c) => `${c.cls.name} ${c.level}${c.subclass ? ` (${c.subclass.name})` : ''}`).join(' / ')
+            : 'Sem classe'}
           {plan.species && ` · ${plan.species.name}${lineage ? ` (${lineage.name})` : ''}`}
           {plan.background && ` · ${plan.background.name}`}
           {character.alignment && ` · ${character.alignment}`}
@@ -83,8 +84,8 @@ export function Sheet({ character, derived, catalog, issues, onGoto }: Props) {
         <Stat label="Classe de Armadura" value={derived.ac.value} sub={derived.ac.formula} />
         <Stat label="Iniciativa" value={formatBonus(derived.initiative)} />
         <Stat label="Velocidade" value={`${derived.speed} ft`} />
-        <Stat label="Pontos de Vida" value={derived.hp} sub={`${character.level}d${derived.hitDie}`} />
-        <Stat label="Proficiência" value={formatBonus(derived.proficiencyBonus)} />
+        <Stat label="Pontos de Vida" value={derived.hp} sub={derived.hitDice} />
+        <Stat label="Proficiência" value={formatBonus(derived.proficiencyBonus)} sub={plan.classes.length > 1 ? `nível ${plan.level}` : undefined} />
         <Stat label="Percepção passiva" value={derived.passivePerception} />
         {derived.darkvision ? <Stat label="Visão no escuro" value={`${derived.darkvision} ft`} /> : null}
       </div>
@@ -153,7 +154,16 @@ export function Sheet({ character, derived, catalog, issues, onGoto }: Props) {
                   <td>
                     {a.damage} {a.damageType}
                   </td>
-                  <td className="muted">{[...a.properties, a.note].filter(Boolean).join(', ')}</td>
+                  <td className="muted">
+                    {[...a.properties, a.note].filter(Boolean).join(', ')}
+                    {a.extras.length > 0 && (
+                      <ul className="attack-extras">
+                        {a.extras.map((extra) => (
+                          <li key={extra}>{extra}</li>
+                        ))}
+                      </ul>
+                    )}
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -163,24 +173,57 @@ export function Sheet({ character, derived, catalog, issues, onGoto }: Props) {
           {derived.spellcasting && (
             <>
               <h2>Conjuração</h2>
-              <div className="stats-strip stats-strip-sm">
-                <Stat label="Atributo" value={derived.spellcasting.ability ?? '—'} />
-                <Stat label="CD de resistência" value={derived.spellcasting.dc ?? '—'} />
-                <Stat label="Ataque de magia" value={derived.spellcasting.attack === null ? '—' : formatBonus(derived.spellcasting.attack)} />
+              <div className="table-scroll">
+                <table className="attacks">
+                  <thead>
+                    <tr>
+                      <th>Classe</th>
+                      <th>Atributo</th>
+                      <th>CD de resistência</th>
+                      <th>Ataque de magia</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {derived.spellcasting.casters.map((c) => (
+                      <tr key={c.slug}>
+                        <th scope="row">{c.name}</th>
+                        <td>{ABILITY_LABEL[c.ability]}</td>
+                        <td>{c.dc}</td>
+                        <td>{formatBonus(c.attack)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
               <p className="slots">
-                {derived.spellcasting.pact
-                  ? `Magia de Pacto: ${derived.spellcasting.pact.count} espaço(s) de nível ${derived.spellcasting.pact.level}`
-                  : Object.entries(derived.spellcasting.slots)
-                      .map(([lvl, n]) => `Nível ${lvl}: ${n}`)
-                      .join(' · ') || 'Sem espaços de magia ainda'}
+                {[
+                  Object.keys(derived.spellcasting.slots).length > 0
+                    ? Object.entries(derived.spellcasting.slots)
+                        .map(([lvl, n]) => `Nível ${lvl}: ${n}`)
+                        .join(' · ')
+                    : null,
+                  derived.spellcasting.pact ? `Magia de Pacto: ${derived.spellcasting.pact.count} espaço(s) de nível ${derived.spellcasting.pact.level}` : null,
+                ]
+                  .filter(Boolean)
+                  .join(' · ') || 'Sem espaços de magia ainda'}
               </p>
+            </>
+          )}
+
+          {derived.defenses.length > 0 && (
+            <>
+              <h2>Defesas</h2>
+              <ul className="plain">
+                {derived.defenses.map((d) => (
+                  <li key={d}>{d}</li>
+                ))}
+              </ul>
             </>
           )}
 
           {derived.resources.length > 0 && (
             <>
-              <h2>Recursos de classe</h2>
+              <h2>Recursos e usos</h2>
               <dl className="facts">
                 {derived.resources.map((r) => (
                   <div key={r.label} className="fact-row">
@@ -235,7 +278,7 @@ export function Sheet({ character, derived, catalog, issues, onGoto }: Props) {
                   .filter((s) => s.spell.level === level)
                   .map((entry) => (
                     <li key={entry.spell.slug}>
-                      <SpellRow spell={entry.spell} extra={<span className="muted">{entry.sources.join(' · ')}{entry.ability ? ` · ${entry.ability}` : ''}</span>} />
+                      <SpellRow spell={entry.spell} extra={<span className="muted">{entry.sources.join(' · ')}{entry.ability ? ` · ${entry.ability}` : ''}{entry.note ? ` · ${entry.note}` : ''}</span>} />
                     </li>
                   ))}
               </ul>
@@ -248,7 +291,7 @@ export function Sheet({ character, derived, catalog, issues, onGoto }: Props) {
         <h2>Características</h2>
         <div className="stack">
           {derived.features.map((f, i) => (
-            <Collapsible key={`${f.source}-${f.name}-${i}`} open={open} title={f.name} meta={`${f.source}${f.level ? ` · nível ${f.level}` : ''}`}>
+            <Collapsible key={`${f.source}-${f.name}-${i}`} open={open} title={f.name} meta={`${f.source}${f.level ? ` · nível ${f.level}` : ''}${f.uses ? ` · ${f.uses}` : ''}`}>
               <Markdown>{f.text}</Markdown>
             </Collapsible>
           ))}

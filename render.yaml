@@ -1,0 +1,18 @@
+# Blueprint do Render (render.com → New → Blueprint): sobe a API de catálogo + contas a partir do Dockerfile.
+# O banco das contas fica em um Postgres externo gratuito (ex.: Neon): cole a URL em ACCOUNTS_DATABASE_URL quando o
+# Render pedir. O catálogo é recriado a cada inicialização a partir dos dados do repositório, então não precisa de disco.
+services:
+  - type: web
+    name: rpg-marcos-api
+    runtime: docker
+    plan: free
+    branch: main
+    healthCheckPath: /api/v1/about
+    autoDeploy: true
+    envVars:
+      - key: ACCOUNTS_DATABASE_URL
+        sync: false
+      - key: ACCOUNTS_SECRET
+        generateValue: true
+      - key: ACCOUNTS_TRUST_PROXY
+        value: "1"

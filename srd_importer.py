@@ -61,7 +61,7 @@ from schemas_and_models import (
 )
 
 # Incrementar sempre que o mapeamento mudar: bancos com outra versão são recriados no startup.
-IMPORT_VERSION = "srd-5.2.1/open5e-srd-2024/v5"
+IMPORT_VERSION = "srd-5.2.1/open5e-srd-2024/v6"
 
 DATA_DIR = Path(__file__).resolve().parent / "data" / "srd_5_2_1"
 SOURCE_BOOK = "System Reference Document 5.2.1"
@@ -1084,6 +1084,46 @@ def build_tools_and_gear(src: SrdSource) -> tuple[list[dict[str, Any]], list[dic
     return tools, gear
 
 
+# Itens que o SRD 5.2.1 cita nos equipamentos iniciais mas que a fonte Open5e não traz como linha de equipamento.
+# Arcane Focus: tabela "Arcane Focuses" do capítulo Equipment (p. 96). Spellbook: sem custo nem peso no SRD.
+ARCANE_FOCUSES = [("Crystal", 10, 1), ("Orb", 20, 3), ("Rod", 10, 2), ("Staff", 5, 4), ("Wand", 10, 1)]
+
+
+def build_extra_gear() -> list[dict[str, Any]]:
+    gear = []
+    for form, gp, weight in ARCANE_FOCUSES:
+        note = " It can also be used as a Quarterstaff." if form == "Staff" else ""
+        description = (
+            f"An Arcane Focus ({form.lower()}) is bejeweled or carved to channel arcane magic. "
+            f"A Sorcerer, Warlock, or Wizard can use it as a Spellcasting Focus.{note}"
+        )
+        gear.append({
+            "slug": f"arcane-focus-{form.lower()}",
+            "name": f"Arcane Focus, {form}",
+            "category": "Spellcasting Focus",
+            "weight_lb": float(weight),
+            "cost_display": f"{gp} GP",
+            "cost_cp": gp * 100,
+            "action_type_required": None,
+            "pack_contents": [],
+            "description": description,
+            "referenced_entities": [],
+        })
+    gear.append({
+        "slug": "spellbook",
+        "name": "Spellbook",
+        "category": "Adventuring Gear",
+        "weight_lb": 0.0,
+        "cost_display": "—",
+        "cost_cp": 0,
+        "action_type_required": None,
+        "pack_contents": [],
+        "description": "A Wizard's Spellbook holds the spells the Wizard has learned (see the Spellcasting and Ritual Adept features). The SRD gives it no cost or weight.",
+        "referenced_entities": [],
+    })
+    return gear
+
+
 def build_magic_items(src: SrdSource) -> list[dict[str, Any]]:
     items = []
     for m in src.records("MagicItem"):
@@ -1236,6 +1276,7 @@ def build_catalog(data_dir: Path = DATA_DIR) -> dict[str, list[dict[str, Any]]]:
     weapons, masteries = build_weapons(src)
     armor = build_armor(src)
     tools, gear = build_tools_and_gear(src)
+    gear += build_extra_gear()
     index = ItemIndex({"weapons": weapons, "armor": armor, "tools": tools, "gear": gear})
     classes, subclasses, options = build_classes(src, index)
     return {

@@ -1,4 +1,4 @@
-"""Configuração do pytest: os testes usam um banco SQLite temporário, isolado do banco local."""
+"""Configuração do pytest: os testes usam bancos SQLite temporários (catálogo e contas), isolados dos bancos locais."""
 
 from __future__ import annotations
 
@@ -8,3 +8,7 @@ from pathlib import Path
 
 _TEST_DB = Path(tempfile.mkdtemp(prefix="dnd5e-catalog-tests-")) / "catalog.db"
 os.environ["DATABASE_URL"] = f"sqlite:///{_TEST_DB}"
+
+_ACCOUNTS_DB = Path(tempfile.mkdtemp(prefix="dnd5e-accounts-tests-")) / "accounts.db"
+# TEST_ACCOUNTS_DATABASE_URL roda os testes de contas em outro banco (ex.: um Postgres descartável).
+os.environ["ACCOUNTS_DATABASE_URL"] = os.getenv("TEST_ACCOUNTS_DATABASE_URL") or f"sqlite:///{_ACCOUNTS_DB}"

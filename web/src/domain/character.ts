@@ -16,6 +16,18 @@ export interface FeatPick {
   skilled?: string[]
 }
 
+/** Escolhas feitas dentro de uma classe. A classe inicial guarda as suas no topo da ficha; as demais, em `multiclass`. */
+export type ClassPicks = Pick<
+  Character,
+  'subclassSlug' | 'classSkills' | 'classTools' | 'expertise' | 'classOrder' | 'styleOption' | 'styleCantrips' | 'masteries' | 'invocations' | 'metamagic' | 'spells'
+>
+
+/** Classe adicional (multiclasse): nível nela e as escolhas feitas dentro dela. */
+export interface ExtraClass extends ClassPicks {
+  slug: string
+  level: number
+}
+
 export interface InventoryItem {
   id: string
   slug: string | null
@@ -44,9 +56,17 @@ export interface Character {
   flaws: string
   backstory: string
 
+  /** Nível na classe inicial (o nível total é `totalLevel`). */
   level: number
   classSlug: string | null
   subclassSlug: string | null
+  /** Classes adicionais, na ordem em que foram escolhidas. */
+  multiclass: ExtraClass[]
+  /** PV: valor médio por nível ou o resultado de cada dado de vida (`hpRolls`, por "classe:nível"). */
+  hpMode: 'average' | 'manual'
+  hpRolls: Record<string, number>
+  /** Afinidade Elemental do Feiticeiro Dracônico (tipo de dano). */
+  elementalAffinity: string | null
 
   speciesSlug: string | null
   speciesChoice: { lineage: string | null; size: string | null; skill: string | null; spellAbility: Ability | null }
@@ -105,6 +125,10 @@ export function newCharacter(): Character {
     level: 1,
     classSlug: null,
     subclassSlug: null,
+    multiclass: [],
+    hpMode: 'average',
+    hpRolls: {},
+    elementalAffinity: null,
     speciesSlug: null,
     speciesChoice: { lineage: null, size: null, skill: null, spellAbility: null },
     backgroundSlug: null,
@@ -144,6 +168,51 @@ export function normalizeCharacter(raw: unknown): Character | null {
     baseScores: { ...base.baseScores, ...data.baseScores },
     spells: { ...base.spells, ...data.spells },
     feats: data.feats ?? {},
+    multiclass: Array.isArray(data.multiclass) ? data.multiclass.map(normalizeExtra) : [],
+    hpRolls: data.hpRolls ?? {},
     inventory: Array.isArray(data.inventory) ? data.inventory : [],
   }
 }
+
+function normalizeExtra(extra: ExtraClass): ExtraClass {
+  return { ...emptyPicks(), ...extra, spells: { ...emptyPicks().spells, ...extra.spells } }
+}
+
+export function emptyPicks(): ClassPicks {
+  return {
+    subclassSlug: null,
+    classSkills: [],
+    classTools: [],
+    expertise: [],
+    classOrder: null,
+    styleOption: 'feat',
+    styleCantrips: [],
+    masteries: [],
+    invocations: [],
+    metamagic: [],
+    spells: { cantrips: [], spellbook: [], prepared: [], arcanum: {} },
+  }
+}
+
+/** Escolhas da classe de índice `index` (0 = classe inicial). */
+export function picksOf(character: Character, index: number): ClassPicks {
+  if (index === 0) {
+    const { subclassSlug, classSkills, classTools, expertise, classOrder, styleOption, styleCantrips, masteries, invocations, metamagic, spells } = character
+    return { subclassSlug, classSkills, classTools, expertise, classOrder, styleOption, styleCantrips, masteries, invocations, metamagic, spells }
+  }
+  const extra = character.multiclass[index - 1]
+  return extra ? { ...extra } : emptyPicks()
+}
+
+export function withPicks(character: Character, index: number, patch: Partial<ClassPicks>): Character {
+  if (index === 0) return { ...character, ...patch }
+  return { ...character, multiclass: character.multiclass.map((extra, i) => (i === index - 1 ? { ...extra, ...patch } : extra)) }
+}
+
+/** Nível do personagem: soma dos níveis de todas as classes. */
+export function totalLevel(character: Character): number {
+  return (character.classSlug ? character.level : 0) + character.multiclass.reduce((sum, c) => sum + c.level, 0)
+}
+
+/** Quebra a chave de talento de uma classe adicional ("rogue:asi-4") em classe e chave base. */
+export const featKey = (classSlug: string | null, base: string): string => (classSlug ? `${classSlug}:${base}` : base)

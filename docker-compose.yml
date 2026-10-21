@@ -5,5 +5,13 @@ services:
       - "8000:8000"
     environment:
       - DATABASE_URL=sqlite:///./dnd5e_2024_catalog.db
+      # Contas e fichas sincronizadas ficam em um banco à parte, num volume que sobrevive a novas versões do catálogo.
+      - ACCOUNTS_DATABASE_URL=sqlite:////app/accounts/dnd5e_accounts.db
+      # - ACCOUNTS_SECRET=troque-por-um-segredo-longo-e-aleatorio
+      # - ACCOUNTS_TRUST_PROXY=1   # atrás de um proxy reverso (usa o X-Forwarded-For nos limites de tentativas)
     volumes:
       - ./data:/app/data
+      - accounts:/app/accounts
+
+volumes:
+  accounts:

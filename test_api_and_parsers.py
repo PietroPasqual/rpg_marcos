@@ -132,8 +132,14 @@ def test_starting_equipment_resolves_to_catalog_items() -> None:
                 else:
                     assert item["item_slug"] in catalog_slugs, item
                     assert item["item_type"] in {"weapon", "armor", "tool", "gear"}
-    # Itens que o SRD cita mas não descreve na tabela de equipamentos
-    assert unresolved == {"Spellbook", "Arcane Focus (crystal)", "Arcane Focus (orb)"}
+    assert unresolved == set()
+    gear = {r["slug"]: r for r in CATALOG["gear"]}
+    assert gear["arcane-focus-orb"]["cost_display"] == "20 GP" and gear["arcane-focus-staff"]["weight_lb"] == 4.0
+    assert "spellbook" in gear
+    wizard = next(c for c in CATALOG["classes"] if c["slug"] == "wizard")
+    assert "spellbook" in {i["item_slug"] for i in wizard["starting_equipment_options"][0]["items"]}
+    sorcerer = next(c for c in CATALOG["classes"] if c["slug"] == "sorcerer")
+    assert "arcane-focus-crystal" in {i["item_slug"] for i in sorcerer["starting_equipment_options"][0]["items"]}
 
 
 def test_tool_proficiency_choices_are_structured() -> None:

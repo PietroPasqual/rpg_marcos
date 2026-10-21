@@ -1,7 +1,8 @@
 import type { ArmorData, Catalog, EquipmentItem, ItemType } from '../api/types'
-import { armorTrainingFor, type ArmorTier } from './derive'
+import { armorTrainingForPlan, type ArmorTier } from './derive'
 import { newId, type Character, type InventoryItem } from './character'
 import { lookup, type Lookup } from './lookup'
+import { buildPlan } from './plan'
 
 const armorTier = (armor: ArmorData): ArmorTier => armor.category.replace(' Armor', '') as ArmorTier
 
@@ -20,8 +21,7 @@ function fromEquipment(eq: EquipmentItem, source: InventoryItem['source'], look:
 /** Equipa armas e a melhor armadura/escudo para os quais a classe tem treinamento. */
 export function autoEquip(character: Character, catalog: Catalog): InventoryItem[] {
   const look = lookup(catalog)
-  const cls = character.classSlug ? look.classes.get(character.classSlug) : undefined
-  const trained = armorTrainingFor(cls?.armor_training ?? [], character.classOrder)
+  const trained = armorTrainingForPlan(buildPlan(character, catalog))
   const items = character.inventory.map((i) => ({ ...i }))
 
   let bestBody: { item: InventoryItem; ac: number } | null = null

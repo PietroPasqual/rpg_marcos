@@ -1,6 +1,8 @@
 import { useMemo, useState } from 'react'
 import type { SpellData } from '../../api/types'
+import { picksOf, withPicks } from '../../domain/character'
 import { formatBonus } from '../../domain/derive'
+import type { ClassPlan } from '../../domain/plan'
 import { spellPools } from '../../domain/spells'
 import { ABILITY_LABEL } from '../../domain/srd'
 import { Chip, Markdown, Notice, Section } from '../ui'
@@ -80,70 +82,95 @@ function SpellPicker({ title, hint, spells, selected, limit, onChange }: { title
   )
 }
 
-export function SpellsStep({ character, derived, catalog, change }: StepProps) {
-  const { plan, spellcasting } = derived
-  const casting = plan.casting
-  const pools = spellPools(character, plan, catalog)
-  const others = derived.spells.filter((s) => s.sources.some((src) => !['Classe', 'Preparada', 'Grimório', 'Arcana Mística'].includes(src) && !src.startsWith('Guerreiro')))
+function ClassSpells({ cp, derived, catalog, change }: StepProps & { cp: ClassPlan }) {
+  const { spellcasting } = derived
+  const { casting, picks } = cp
+  const pools = spellPools(picks, cp, catalog)
+  const multi = derived.plan.classes.length > 1
+  const caster = spellcasting?.casters.find((c) => c.slug === cp.slug)
+  const patchSpells = (p: Partial<typeof picks.spells>) => change((c) => withPicks(c, cp.index, { spells: { ...picksOf(c, cp.index).spells, ...p } }))
+  const suffix = multi ? ` de ${cp.cls.name}` : ''
+
+  return (
+    <>
+      {multi && <h3 className="class-block-title">{cp.cls.name} · nível {cp.level}</h3>}
+      <p className="lead">
+        Atributo de conjuração: <strong>{casting.ability ? ABILITY_LABEL[casting.ability] : '—'}</strong>
+        {caster && (
+          <>
+            {' · '}CD de resistência <strong>{caster.dc}</strong>
+            {' · '}Ataque de magia <strong>{formatBonus(caster.attack)}</strong>
+          </>
+        )}
+      </p>
+
+      {casting.cantrips > 0 && <SpellPicker title={`Truques${suffix}`} spells={pools.cantrips} selected={picks.spells.cantrips} limit={casting.cantrips} onChange={(cantrips) => patchSpells({ cantrips })} />}
+
+      {casting.spellbook > 0 && (
+        <SpellPicker
+          title={`Grimório${suffix}`}
+          hint={`Seu grimório começa com 6 magias e ganha 2 a cada nível. Só entram magias de níveis para os quais você tem espaços (até o nível ${casting.maxSpellLevel}).`}
+          spells={pools.spellbook}
+          selected={picks.spells.spellbook}
+          limit={casting.spellbook}
+          onChange={(spellbook) => patchSpells({ spellbook })}
+        />
+      )}
+
+      {casting.prepared > 0 && (
+        <SpellPicker
+          title={`Magias preparadas${suffix}`}
+          hint={cp.slug === 'wizard' ? 'Prepare magias do seu grimório. Você pode trocá-las após cada Descanso Longo.' : `Magias de nível 1 a ${casting.maxSpellLevel} da lista de ${cp.cls.name}. Você pode trocá-las após cada Descanso Longo.`}
+          spells={pools.prepared}
+          selected={picks.spells.prepared}
+          limit={casting.prepared}
+          onChange={(prepared) => patchSpells({ prepared })}
+        />
+      )}
+
+      {casting.arcanumLevels.map((lvl) => (
+        <SpellPicker
+          key={lvl}
+          title={`Arcana Mística (nível ${lvl})`}
+          hint="Uma vez por Descanso Longo, sem gastar espaço de magia."
+          spells={pools.arcanum[lvl] ?? []}
+          selected={picks.spells.arcanum[String(lvl)] ? [picks.spells.arcanum[String(lvl)]!] : []}
+          limit={1}
+          onChange={(next) => patchSpells({ arcanum: { ...picks.spells.arcanum, [String(lvl)]: next[0] ?? '' } })}
+        />
+      ))}
+    </>
+  )
+}
+
+export function SpellsStep(props: StepProps) {
+  const { derived } = props
+  const { plan } = derived
+  const casters = plan.classes.filter((cp) => cp.row?.spellcasting)
+  const others = derived.spells.filter((s) => s.sources.some((src) => !['Classe', 'Preparada', 'Grimório', 'Arcana Mística'].some((own) => src === own || src.startsWith(`${own} (`)) && !src.startsWith('Guerreiro')))
 
   if (!plan.cls) return <Notice>Escolha uma classe para ver as magias dela.</Notice>
+
+  const slotText = [
+    Object.keys(plan.spellSlots).length > 0 ? `Espaços: ${Object.entries(plan.spellSlots).map(([lvl, n]) => `${n}× nível ${lvl}`).join(' · ')}` : null,
+    plan.pactSlots ? `Espaços de Magia de Pacto: ${plan.pactSlots.count} de nível ${plan.pactSlots.level}` : null,
+  ].filter(Boolean)
 
   return (
     <div className="step">
       <h2>Magias</h2>
-      {!plan.row?.spellcasting ? (
-        <Notice>{plan.cls.name} não conjura magias neste nível. Se sua espécie ou algum talento concede magias, elas aparecem abaixo e na ficha.</Notice>
+      {casters.length === 0 ? (
+        <Notice>{plan.classes.map((c) => c.cls.name).join(' e ')} não conjura magias neste nível. Se sua espécie ou algum talento concede magias, elas aparecem abaixo e na ficha.</Notice>
       ) : (
         <>
-          <p className="lead">
-            Atributo de conjuração: <strong>{casting.ability ? ABILITY_LABEL[casting.ability] : '—'}</strong>
-            {spellcasting?.dc != null && (
-              <>
-                {' · '}CD de resistência <strong>{spellcasting.dc}</strong>
-                {' · '}Ataque de magia <strong>{formatBonus(spellcasting.attack ?? 0)}</strong>
-              </>
-            )}
-          </p>
           <p className="muted">
-            {casting.pact ? `Espaços de Magia de Pacto: ${casting.pact.count} de nível ${casting.pact.level}.` : `Espaços: ${Object.entries(casting.slots).map(([lvl, n]) => `${n}× nível ${lvl}`).join(' · ') || 'nenhum ainda'}.`}
+            {slotText.join(' · ') || 'Nenhum espaço de magia ainda.'}
+            {plan.classes.filter((c) => c.casting.ability).length > 1 && !plan.pactSlots?.count && ' (espaços combinados de todas as classes conjuradoras)'}
           </p>
-
-          {casting.cantrips > 0 && (
-            <SpellPicker title="Truques" spells={pools.cantrips} selected={character.spells.cantrips} limit={casting.cantrips} onChange={(cantrips) => change((c) => ({ ...c, spells: { ...c.spells, cantrips } }))} />
-          )}
-
-          {casting.spellbook > 0 && (
-            <SpellPicker
-              title="Grimório"
-              hint={`Seu grimório começa com 6 magias e ganha 2 a cada nível. Só entram magias de níveis para os quais você tem espaços (até o nível ${casting.maxSpellLevel}).`}
-              spells={pools.spellbook}
-              selected={character.spells.spellbook}
-              limit={casting.spellbook}
-              onChange={(spellbook) => change((c) => ({ ...c, spells: { ...c.spells, spellbook } }))}
-            />
-          )}
-
-          {casting.prepared > 0 && (
-            <SpellPicker
-              title="Magias preparadas"
-              hint={plan.cls.slug === 'wizard' ? 'Prepare magias do seu grimório. Você pode trocá-las após cada Descanso Longo.' : `Magias de nível 1 a ${casting.maxSpellLevel} da lista de ${plan.cls.name}. Você pode trocá-las após cada Descanso Longo.`}
-              spells={pools.prepared}
-              selected={character.spells.prepared}
-              limit={casting.prepared}
-              onChange={(prepared) => change((c) => ({ ...c, spells: { ...c.spells, prepared } }))}
-            />
-          )}
-
-          {casting.arcanumLevels.map((lvl) => (
-            <SpellPicker
-              key={lvl}
-              title={`Arcana Mística (nível ${lvl})`}
-              hint="Uma vez por Descanso Longo, sem gastar espaço de magia."
-              spells={pools.arcanum[lvl] ?? []}
-              selected={character.spells.arcanum[String(lvl)] ? [character.spells.arcanum[String(lvl)]!] : []}
-              limit={1}
-              onChange={(next) => change((c) => ({ ...c, spells: { ...c.spells, arcanum: { ...c.spells.arcanum, [String(lvl)]: next[0] ?? '' } } }))}
-            />
+          {casters.map((cp) => (
+            <div key={cp.slug} className="class-block">
+              <ClassSpells {...props} cp={cp} />
+            </div>
           ))}
         </>
       )}

@@ -85,6 +85,12 @@ export interface ClassData extends Named {
   features: ClassFeature[]
   subclass_unlock_level: number
   subclasses_summary: Named[]
+  multiclassing: MulticlassRules
+}
+
+export interface MulticlassRules {
+  ability_score_minimum: Partial<Record<Ability, number>>
+  proficiencies_gained: { weapons: string[]; armor: string[]; skills: string[]; tools: string[]; description: string[] }
 }
 
 export interface SubclassData extends Named {
