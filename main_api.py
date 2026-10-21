@@ -12,6 +12,7 @@ import json
 import math
 import os
 from contextlib import asynccontextmanager
+from pathlib import Path as FilePath
 from typing import Annotated, Any, Callable, Generator, Type, TypeVar
 
 from fastapi import Depends, FastAPI, HTTPException, Path, Query, Request, Response
@@ -19,6 +20,7 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy import Select, create_engine, func, or_, select
 from sqlalchemy.orm import Session, sessionmaker
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -420,6 +422,22 @@ def get_class_single_level(
         if row.level == level:
             return row
     raise HTTPException(status_code=404, detail=f"Level {level} not found in the level table of class '{slug}'.")
+
+
+@app.get("/api/v1/subclasses", response_model=PaginatedResponse[SubclassSchema], tags=["1. Classes & Subclasses"])
+def list_subclasses(
+    session: Annotated[Session, Depends(get_db)],
+    page: Annotated[int, Query(ge=1)] = 1,
+    size: Annotated[int, Query(ge=1, le=100)] = 20,
+    class_slug: Annotated[str | None, Query(description="Classe pai (ex.: wizard)")] = None,
+    q: Annotated[str | None, Query(description="Busca por nome da subclasse")] = None,
+) -> PaginatedResponse[SubclassSchema]:
+    stmt = select(SubclassModel)
+    if class_slug:
+        stmt = stmt.where(SubclassModel.parent_class_slug == class_slug.lower().strip())
+    if q:
+        stmt = stmt.where(ilike(SubclassModel.name, q))
+    return paginate_query(session, stmt.order_by(SubclassModel.parent_class_slug.asc(), SubclassModel.name.asc()), page, size, SubclassSchema)
 
 
 @app.get(
@@ -1057,3 +1075,19 @@ def omni_search(
         total_matches=total_matches,
         results_by_type=results_by_type,
     )
+
+
+# =====================================================================
+# 5. SITE (OPCIONAL): serve o montador de ficha compilado, se existir
+# =====================================================================
+
+def mount_web_app(application: FastAPI, dist: FilePath) -> bool:
+    """Serve o site compilado em "/". Deve ser chamado depois de registrar as rotas, para não sobrepô-las."""
+    if not dist.is_dir():
+        return False
+    application.mount("/", StaticFiles(directory=dist, html=True), name="web")
+    return True
+
+
+# Depois de `cd web && npm run build`, a pasta web/dist é servida em "/", e a API continua em /api/v1.
+mount_web_app(app, FilePath(os.getenv("WEB_DIST_DIR") or FilePath(__file__).resolve().parent / "web" / "dist"))

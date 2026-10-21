@@ -61,7 +61,7 @@ from schemas_and_models import (
 )
 
 # Incrementar sempre que o mapeamento mudar: bancos com outra versão são recriados no startup.
-IMPORT_VERSION = "srd-5.2.1/open5e-srd-2024/v3"
+IMPORT_VERSION = "srd-5.2.1/open5e-srd-2024/v4"
 
 DATA_DIR = Path(__file__).resolve().parent / "data" / "srd_5_2_1"
 SOURCE_BOOK = "System Reference Document 5.2.1"
@@ -295,6 +295,29 @@ class ItemIndex:
                 self.type_by_slug[row["slug"]] = item_type
         self.by_tokens = {frozenset(slug.split("-")): slug for slug in self.type_by_slug}
 
+    def tool_group(self, kind: str) -> list[str]:
+        """Slugs de ferramentas por tipo: gaming-set, musical-instrument ou artisan."""
+        tools = [s for s, t in self.type_by_slug.items() if t == "tool"]
+        if kind == "artisan":
+            return sorted(s for s in tools if s.endswith(("-supplies", "-tools", "-utensils")) and s not in {"navigators-tools", "thieves-tools"})
+        return sorted(s for s in tools if s.startswith(f"{kind}-"))
+
+    def tool_choice(self, text: str) -> tuple[int, list[str]] | None:
+        """'Choose one kind of Gaming Set' / 'Choose 3 Musical Instruments' -> (quantidade, opções)."""
+        match = re.match(r"^Choose\s+(?P<n>\d+|one|two|three)\b", text or "", re.IGNORECASE)
+        if not match:
+            return None
+        count = {"one": 1, "two": 2, "three": 3}.get(match.group("n").lower()) or int(match.group("n"))
+        lower = text.lower()
+        options: list[str] = []
+        if "artisan" in lower:
+            options += self.tool_group("artisan")
+        if "musical" in lower:
+            options += self.tool_group("musical-instrument")
+        if "gaming" in lower:
+            options += self.tool_group("gaming-set")
+        return (count, options) if options else None
+
     def _lookup(self, slug: str) -> str | None:
         candidates = [slug, self.ALIASES.get(slug, slug)]
         for suffix in ("s", "es"):
@@ -314,10 +337,7 @@ class ItemIndex:
                 item_type, prefix = self.CHOICES[slug]
                 entry["choose_from"] = sorted(s for s in self.type_by_slug if s.startswith(prefix))
             else:  # Monge: ferramenta de artesão ou instrumento musical
-                entry["choose_from"] = sorted(
-                    s for s in self.type_by_slug
-                    if s.startswith("musical-instrument-") or s.endswith(("-supplies", "-tools", "-utensils")) and s not in {"navigators-tools", "thieves-tools"}
-                )
+                entry["choose_from"] = sorted(self.tool_group("artisan") + self.tool_group("musical-instrument"))
             entry["item_type"] = "tool" if slug not in {"holy-symbol"} else "gear"
             return entry
 
@@ -481,6 +501,7 @@ def build_backgrounds(src: SrdSource, index: ItemIndex) -> list[dict[str, Any]]:
         by_type = {b["type"]: b["desc"] for b in benefits.get(bg["pk"], [])}
         feat_name = by_type["feat"].strip()
         tool = by_type.get("tool_proficiency", "").strip()
+        tool_choice = index.tool_choice(tool)
         backgrounds.append({
             "slug": strip_key(bg["pk"]),
             "name": bg["name"],
@@ -489,7 +510,8 @@ def build_backgrounds(src: SrdSource, index: ItemIndex) -> list[dict[str, Any]]:
             "origin_feat_name": feat_name,
             "skill_proficiencies": [normalize_skill(s) for s in split_list(by_type["skill_proficiency"])],
             "tool_proficiency": tool,
-            "tool_slug": slugify(re.sub(r"\s*\(.*\)$", "", tool)) or None,
+            "tool_slug": None if tool_choice else (slugify(re.sub(r"\s*\(.*\)$", "", tool)) or None),
+            "tool_choose_from": tool_choice[1] if tool_choice else [],
             "equipment_options": parse_equipment_options(by_type.get("equipment", ""), index),
             "description": bg["desc"] or "",
         })
@@ -766,6 +788,10 @@ def build_classes(src: SrdSource, index: ItemIndex) -> tuple[list[dict[str, Any]
             "skill_options": skill_options,
             "weapon_proficiencies": [core["Weapon Proficiencies"]] if core.get("Weapon Proficiencies") else [],
             "tool_proficiencies": [core["Tool Proficiencies"]] if core.get("Tool Proficiencies") else [],
+            "tool_proficiency_choices": (
+                [{"count": choice[0], "label": core["Tool Proficiencies"], "choose_from": choice[1]}]
+                if (choice := index.tool_choice(core.get("Tool Proficiencies", ""))) else []
+            ),
             "armor_training": [] if core.get("Armor Training", "None") == "None" else [core["Armor Training"]],
             "starting_equipment_options": parse_equipment_options(core.get("Starting Equipment", ""), index),
             "multiclassing": _parse_multiclass(multiclass_text.get(slug, ""), primary),

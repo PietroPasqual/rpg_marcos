@@ -136,6 +136,23 @@ def test_starting_equipment_resolves_to_catalog_items() -> None:
     assert unresolved == {"Spellbook", "Arcane Focus (crystal)", "Arcane Focus (orb)"}
 
 
+def test_tool_proficiency_choices_are_structured() -> None:
+    soldier = next(b for b in CATALOG["backgrounds"] if b["slug"] == "soldier")
+    assert soldier["tool_slug"] is None
+    assert "gaming-set-dice" in soldier["tool_choose_from"]
+    acolyte = next(b for b in CATALOG["backgrounds"] if b["slug"] == "acolyte")
+    assert (acolyte["tool_slug"], acolyte["tool_choose_from"]) == ("calligraphers-supplies", [])
+
+    classes = {c["slug"]: c for c in CATALOG["classes"]}
+    [bard_choice] = classes["bard"]["tool_proficiency_choices"]
+    assert bard_choice["count"] == 3
+    assert all(s.startswith("musical-instrument-") for s in bard_choice["choose_from"])
+    [monk_choice] = classes["monk"]["tool_proficiency_choices"]
+    assert monk_choice["count"] == 1
+    assert "smiths-tools" in monk_choice["choose_from"] and "musical-instrument-lute" in monk_choice["choose_from"]
+    assert classes["rogue"]["tool_proficiency_choices"] == []
+
+
 def test_species_choices_are_exposed_as_lineages() -> None:
     species = {sp["slug"]: sp for sp in CATALOG["species"]}
     assert [lin["slug"] for lin in species["gnome"]["lineages"]] == ["forest-gnome", "rock-gnome"]
@@ -196,6 +213,13 @@ def test_health_about_and_classes() -> None:
 
     life = client.get("/api/v1/subclasses/life-domain").json()
     assert life["always_prepared_spells"][0]["spell_slugs"] == ["aid", "bless", "cure-wounds", "lesser-restoration"]
+
+
+def test_subclass_listing() -> None:
+    everything = client.get("/api/v1/subclasses?size=100").json()
+    assert everything["meta"]["total"] == 12
+    wizard = client.get("/api/v1/subclasses?class_slug=wizard").json()
+    assert [s["slug"] for s in wizard["items"]] == ["evoker"]
 
 
 def test_origins_and_feats() -> None:
@@ -376,6 +400,32 @@ def test_like_wildcards_are_literal_and_search_covers_all_types() -> None:
     assert search["results_by_type"]["magic_items"][0]["api_path"] == "/api/v1/magic-items/bag-of-holding"
 
     assert client.get("/api/v1/search?q=%20%20%20").status_code == 422
+
+
+def test_built_web_app_is_served_without_shadowing_the_api(tmp_path) -> None:
+    from pathlib import Path
+
+    from fastapi import FastAPI
+
+    from main_api import mount_web_app
+
+    dist = tmp_path / "dist"
+    dist.mkdir()
+    (dist / "index.html").write_text("<title>site</title>")
+    probe = FastAPI()
+
+    @probe.get("/api/v1/ping")
+    def ping() -> dict[str, str]:
+        return {"ok": "api"}
+
+    assert mount_web_app(probe, dist) is True
+    site = TestClient(probe)
+    assert site.get("/").text == "<title>site</title>"
+    assert site.get("/api/v1/ping").json() == {"ok": "api"}  # a API não é sobreposta pelo site
+    assert mount_web_app(FastAPI(), Path(tmp_path / "nao-existe")) is False
+    # A API real continua respondendo em /health e /docs, com ou sem site compilado
+    assert client.get("/health").status_code == 200
+    assert client.get("/docs").status_code == 200
 
 
 def test_cors_allows_public_read_only_access() -> None:

@@ -159,6 +159,7 @@ class ClassModel(CatalogMixin, Base):
     skill_options: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
     weapon_proficiencies: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
     tool_proficiencies: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    tool_proficiency_choices: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list, nullable=False)
     armor_training: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
     starting_equipment_options: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list, nullable=False)
     multiclassing: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
@@ -236,6 +237,7 @@ class BackgroundModel(CatalogMixin, Base):
     skill_proficiencies: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
     tool_proficiency: Mapped[str] = mapped_column(String(160), nullable=False)
     tool_slug: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    tool_choose_from: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
     equipment_options: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list, nullable=False)
     description: Mapped[str] = mapped_column(Text, nullable=False)
 
@@ -511,6 +513,14 @@ class EquipmentItemQuantitySchema(BaseModel):
     choose_from: list[str] = Field(default_factory=list, description="Se preenchido, o jogador escolhe um destes slugs (ex.: um Holy Symbol)")
 
 
+class ToolProficiencyChoiceSchema(BaseModel):
+    """'Choose 3 Musical Instruments': o jogador escolhe `count` ferramentas dentre `choose_from`."""
+
+    count: int
+    label: str
+    choose_from: list[str]
+
+
 class BackgroundEquipmentOptionSchema(BaseModel):
     option_label: str
     items: list[EquipmentItemQuantitySchema] = Field(default_factory=list)
@@ -523,7 +533,8 @@ class BackgroundSchema(CatalogBaseSchema):
     origin_feat_name: str
     skill_proficiencies: list[str] = Field(..., min_length=2, max_length=2)
     tool_proficiency: str
-    tool_slug: str | None = None
+    tool_slug: str | None = Field(default=None, description="Slug da ferramenta fixa; nulo quando há escolha (veja tool_choose_from)")
+    tool_choose_from: list[str] = Field(default_factory=list, description="Se preenchido, o jogador escolhe uma destas ferramentas")
     equipment_options: list[BackgroundEquipmentOptionSchema]
     description: str
 
@@ -611,6 +622,7 @@ class ClassSchema(CatalogBaseSchema):
     skill_options: list[str]
     weapon_proficiencies: list[str]
     tool_proficiencies: list[str] = Field(default_factory=list)
+    tool_proficiency_choices: list[ToolProficiencyChoiceSchema] = Field(default_factory=list)
     armor_training: list[str]
     starting_equipment_options: list[BackgroundEquipmentOptionSchema]
     multiclassing: MulticlassRulesSchema

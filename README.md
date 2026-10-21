@@ -7,7 +7,7 @@ API RESTful **somente leitura** em **Python (FastAPI + Pydantic v2 + SQLAlchemy 
 | Entidade | Rota | Registros |
 | :--- | :--- | ---: |
 | Classes (com tabela de níveis 1–20, espaços de magia e multiclasse) | `/api/v1/classes` | 12 |
-| Subclasses | `/api/v1/subclasses/{slug}` · `/api/v1/classes/{slug}/subclasses` | 12 |
+| Subclasses | `/api/v1/subclasses` · `/api/v1/subclasses/{slug}` · `/api/v1/classes/{slug}/subclasses` | 12 |
 | Opções de classe (Invocações Místicas, Metamagia) | `/api/v1/class-feature-options` | 37 |
 | Espécies (com linhagens/legados) | `/api/v1/species` | 9 |
 | Antecedentes | `/api/v1/backgrounds` | 4 |
@@ -43,6 +43,17 @@ A Wizards pede que não seja incluída nenhuma outra atribuição a ela; é perm
 
 Limitações conhecidas dos dados: tabelas do glossário (ex.: *Damage Types*, *Carrying Capacity*) não são extraídas, só o texto; o número de usos de Ações Lendárias dos monstros não existe no dataset de origem; algumas descrições curtas de montarias, veículos e munições foram escritas pelo Open5e e não pelo SRD.
 
+## Montador de ficha (site)
+
+A pasta [`web/`](web/README.md) contém um site em React que monta fichas de personagem passo a passo (classe, origem, atributos, escolhas, magias, equipamento e ficha final para imprimir) usando esta API. Para vê-lo funcionando:
+
+```bash
+uvicorn main_api:app --port 8000     # terminal 1: a API
+cd web && npm install && npm run dev  # terminal 2: o site em http://localhost:5173
+```
+
+Para publicar tudo em um único processo, rode `npm run build` dentro de `web/`: a API passa a servir o site compilado em `/`.
+
 ## Arquivos do Projeto
 
 * `main_api.py` — Aplicação FastAPI com todos os endpoints `/api/v1/...`, busca global, `ETag`/`304` e erros RFC 7807.
@@ -51,6 +62,7 @@ Limitações conhecidas dos dados: tabelas do glossário (ex.: *Damage Types*, *
 * `sync_srd_cli.py` — CLI para reimportar ou atualizar os dados.
 * `scripts/download_srd_data.py` — Baixa os dados de origem (Open5e + PDF oficial) para `data/srd_5_2_1/`.
 * `scripts/extract_srd_pdf.py` — Extrai o Glossário de Regras e a multiclasse do PDF do SRD 5.2.1.
+* `scripts/export_catalog_fixture.py` — Exporta o catálogo congelado usado nos testes do site.
 * `test_api_and_parsers.py` — Testes (`pytest`) do importador, da integridade dos dados e das rotas.
 * `documentacao_api_dnd5e_2024.md` — Especificação técnica original da arquitetura e dos contratos REST.
 
@@ -115,4 +127,7 @@ docker compose up --build
 * **Erros:** todas as respostas de erro (404, 422, rotas inexistentes) usam `application/problem+json` (RFC 7807). Os 404 de slug trazem `suggestions` com slugs parecidos; os 422 trazem `errors` com o parâmetro inválido.
 * **CORS:** liberado para qualquer origem com `GET` e `OPTIONS`, sem credenciais, para ser consumido direto do navegador.
 * **Busca global:** `/api/v1/search?q=...` procura por nome em todas as entidades do catálogo (magias, talentos, classes, subclasses, opções de classe, espécies, antecedentes, armas, armaduras, ferramentas, equipamentos, itens mágicos, monstros e regras).
+* **Equipamento inicial:** `starting_equipment_options` (classes) e `equipment_options` (antecedentes) apontam para itens reais do catálogo (`item_slug` + `item_type`, que indica a rota `/api/v1/equipment/...`); escolhas livres, como "um Holy Symbol", trazem as opções em `choose_from`. `Spellbook` e `Arcane Focus` não têm `item_slug`, pois o SRD não os descreve na tabela de equipamentos.
+* **Escolhas de ferramenta:** `tool_choose_from` (antecedentes) e `tool_proficiency_choices` (classes) listam o que o jogador pode escolher.
+* **Espécies com escolha:** `lineages` traz as opções de Elfo, Gnomo, Tiefling, Dragonato e Golias.
 * **Textos:** descrições vêm em inglês, como no SRD, com formatação Markdown (negrito, itálico e tabelas); as tabelas também são entregues estruturadas em campos `tables` quando existem.
