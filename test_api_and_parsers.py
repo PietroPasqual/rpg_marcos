@@ -241,3 +241,75 @@ def test_rfc7807_not_found_with_fuzzy_suggestions() -> None:
     body = not_found.json()
     assert body["title"] == "Resource Not Found"
     assert "fireball" in body["suggestions"]
+
+# =====================================================================
+# 3. TESTES DE REGRESSÃO: PAGINAÇÃO, CACHE, ERROS E BUSCA
+# =====================================================================
+
+
+def test_json_filters_are_applied_before_pagination() -> None:
+    # Antecedentes com INT: acolyte, criminal, sage (3 no total), 1 por página
+    page2 = client.get("/api/v1/backgrounds?ability=INT&size=1&page=2").json()
+    assert page2["meta"]["total"] == 3
+    assert page2["meta"]["pages"] == 3
+    assert page2["meta"]["has_next"] is True
+    assert [b["slug"] for b in page2["items"]] == ["criminal"]
+
+    # Magias de feiticeiro: sorcerous-burst (nível 0) e fireball (nível 3)
+    spells = client.get("/api/v1/spells?class_slug=sorcerer&size=1&page=2").json()
+    assert spells["meta"]["total"] == 2
+    assert [s["slug"] for s in spells["items"]] == ["fireball"]
+
+    empty_page = client.get("/api/v1/backgrounds?ability=INT&size=1&page=9").json()
+    assert empty_page["meta"]["total"] == 3
+    assert empty_page["items"] == []
+
+
+def test_etag_if_none_match_returns_304() -> None:
+    first = client.get("/api/v1/spells/fireball")
+    etag = first.headers["ETag"]
+    cached = client.get("/api/v1/spells/fireball", headers={"If-None-Match": etag})
+    assert cached.status_code == 304
+    assert cached.headers["ETag"] == etag
+    assert cached.content == b""
+
+    stale = client.get("/api/v1/spells/fireball", headers={"If-None-Match": 'W/"outdated"'})
+    assert stale.status_code == 200
+
+
+def test_all_errors_use_rfc7807_problem_details() -> None:
+    out_of_range_level = client.get("/api/v1/classes/barbarian/levels/21")
+    assert out_of_range_level.status_code == 422
+    assert out_of_range_level.headers["content-type"].startswith("application/problem+json")
+
+    invalid = client.get("/api/v1/spells?level=42")
+    assert invalid.status_code == 422
+    assert invalid.headers["content-type"].startswith("application/problem+json")
+    body = invalid.json()
+    assert body["title"] == "Invalid Request Parameters"
+    assert body["errors"][0]["loc"] == ["query", "level"]
+
+    unknown_route = client.get("/api/v1/does-not-exist")
+    assert unknown_route.status_code == 404
+    assert unknown_route.headers["content-type"].startswith("application/problem+json")
+
+
+def test_like_wildcards_are_literal_and_search_covers_all_types() -> None:
+    assert client.get("/api/v1/spells?q=%25").json()["meta"]["total"] == 0
+    assert client.get("/api/v1/spells?q=_").json()["meta"]["total"] == 0
+
+    search = client.get("/api/v1/search?q=bag").json()
+    assert "magic_items" in search["results_by_type"]
+    assert search["results_by_type"]["magic_items"][0]["api_path"] == "/api/v1/magic-items/bag-of-holding"
+
+    assert client.get("/api/v1/search?q=%20%20%20").status_code == 422
+
+
+def test_cors_allows_public_read_only_access() -> None:
+    preflight = client.options(
+        "/api/v1/spells",
+        headers={"Origin": "http://example.com", "Access-Control-Request-Method": "GET"},
+    )
+    assert preflight.status_code == 200
+    assert preflight.headers["access-control-allow-origin"] == "*"
+    assert "access-control-allow-credentials" not in preflight.headers

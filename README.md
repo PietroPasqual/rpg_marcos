@@ -56,3 +56,12 @@ python sync_wikidot_cli.py --background acolyte
 # Sincronizar um lote de magias a partir do índice /spells do Wikidot:
 python sync_wikidot_cli.py --sync-spells-index --limit 50
 ```
+
+## Consumindo a API (somente leitura)
+
+* **Paginação:** toda listagem aceita `page` e `size` (máx. 100) e devolve `meta.total`, `meta.pages`, `has_next` e `has_prev`. Todos os filtros, inclusive os de listas como `ability`, `class_slug`, `skill` e `damage_type`, são aplicados antes da paginação, então `total` sempre reflete o resultado completo.
+* **Busca textual (`q`):** não diferencia maiúsculas/minúsculas; `%` e `_` são tratados como texto literal.
+* **Cache HTTP:** os endpoints de detalhe (`/{slug}`) retornam `ETag`. Reenvie-o em `If-None-Match` para receber `304 Not Modified` sem corpo quando nada mudou.
+* **Erros:** todas as respostas de erro (404, 422, rotas inexistentes) usam `application/problem+json` (RFC 7807). Os 404 de slug trazem `suggestions` com slugs parecidos; os 422 trazem `errors` com o parâmetro inválido.
+* **CORS:** liberado para qualquer origem com `GET` e `OPTIONS`, sem credenciais, para ser consumido direto do navegador.
+* **Busca global:** `/api/v1/search?q=...` procura por nome em todas as entidades do catálogo (magias, talentos, classes, subclasses, opções de classe, espécies, antecedentes, armas, armaduras, ferramentas, equipamentos, itens mágicos, monstros, bastiões e regras).
