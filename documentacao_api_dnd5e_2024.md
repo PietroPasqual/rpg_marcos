@@ -1,5 +1,7 @@
 # Especificação Técnica Completa — API de Catálogo D&D 5e (Edição 2024 / SRD 5.2.1)
 
+> **Atualização (v2.0):** a fonte de dados passou a ser exclusivamente o **SRD 5.2.1** (CC-BY 4.0), via o dataset estruturado do Open5e e o PDF oficial — veja a seção "Fonte dos dados e licença" do `README.md`. O pipeline de raspagem do Wikidot (`wikidot_etl_scraper.py`, `sync_wikidot_cli.py`) e o domínio de Bastiões (que não faz parte do SRD) foram removidos, e a coluna `raw_html_hash` virou `source_hash`. As seções abaixo que descrevem o Wikidot ou os Bastiões são mantidas apenas como referência histórica do desenho original.
+
 ## 1. Visão Geral, Escopo e Arquitetura do Sistema
 
 Esta documentação define a especificação de engenharia ponta a ponta para a construção de uma **API RESTful de Catálogo do Dungeons & Dragons 5ª Edição (Revisão 2024 / 5.5e)** em **Python**. O sistema é projetado para servir como fonte única de verdade (*Single Source of Truth*) para aplicações de ficha de personagem, Virtual Tabletops (VTTs), bots de Discord, geradores de encontros e ferramentas de consulta rápida.

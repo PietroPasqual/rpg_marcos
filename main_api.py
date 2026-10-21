@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import difflib
 import hashlib
+import json
 import math
 import os
 from contextlib import asynccontextmanager
@@ -31,8 +32,7 @@ from schemas_and_models import (
     BackgroundModel,
     BackgroundSchema,
     Base,
-    BastionFacilityModel,
-    BastionFacilitySchema,
+    CatalogMetadataModel,
     ClassFeatureOptionModel,
     ClassFeatureOptionSchema,
     ClassLevelProgressionSchema,
@@ -69,7 +69,7 @@ from schemas_and_models import (
     WeaponModel,
     WeaponSchema,
 )
-from wikidot_etl_scraper import seed_database_with_2024_catalog
+from srd_importer import ATTRIBUTION, IMPORT_VERSION, SOURCE_BOOK, SOURCE_URL, current_import_version, import_srd_catalog
 
 SchemaT = TypeVar("SchemaT")
 
@@ -84,10 +84,20 @@ engine = create_engine(DATABASE_URL, connect_args=connect_args, future=True)
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False)
 
 
-def init_db_and_seed() -> None:
+def init_db_and_seed(force_reimport: bool = False) -> dict[str, int] | None:
+    """
+    Cria o banco e importa o catálogo do SRD 5.2.1. Se o banco foi gerado por outra versão do
+    importador (ou pelo seed antigo), todas as tabelas são recriadas — o catálogo é somente leitura.
+    """
     Base.metadata.create_all(bind=engine)
     with SessionLocal() as session:
-        seed_database_with_2024_catalog(session)
+        up_to_date = current_import_version(session) == IMPORT_VERSION
+    if up_to_date and not force_reimport:
+        return None
+    Base.metadata.drop_all(bind=engine)
+    Base.metadata.create_all(bind=engine)
+    with SessionLocal() as session:
+        return import_srd_catalog(session)
 
 
 @asynccontextmanager
@@ -107,10 +117,11 @@ def get_db() -> Generator[Session, None, None]:
 
 app = FastAPI(
     title="D&D 5e (2024 Edition / SRD 5.2.1) Catalog API",
-    version="1.0.0",
+    version="2.0.0",
     description=(
-        "API RESTful de Catálogo do Dungeons & Dragons 5ª Edição (Regras de 2024 / 5.5e), "
-        "estruturada sobre a base de dados do Wikidot D&D 2024 e o SRD v5.2.1 (CC-BY 4.0)."
+        "API RESTful somente leitura com o catálogo do System Reference Document 5.2.1 "
+        "(regras de 2024 de D&D 5e), licenciado sob Creative Commons Attribution 4.0.\n\n"
+        f"{ATTRIBUTION}"
     ),
     lifespan=lifespan,
 )
@@ -284,7 +295,7 @@ def get_by_slug_or_404(
             suggestions=suggestions,
         )
 
-    etag_seed = f"{obj.slug}:{getattr(obj, 'raw_html_hash', None)}:{getattr(obj, 'updated_at', '')}"
+    etag_seed = f"{obj.slug}:{getattr(obj, 'source_hash', None)}:{getattr(obj, 'updated_at', '')}"
     etag_hash = hashlib.sha256(etag_seed.encode("utf-8")).hexdigest()[:16]
     etag = f'W/"{etag_hash}"'
 
@@ -306,6 +317,22 @@ def get_by_slug_or_404(
 @app.get("/health", tags=["Health"])
 def health_check() -> dict[str, str]:
     return {"status": "ok", "edition": "D&D 5e (2024 / SRD 5.2.1)"}
+
+
+@app.get("/api/v1/about", tags=["Health"])
+def about_catalog(session: Annotated[Session, Depends(get_db)]) -> dict[str, Any]:
+    """Fonte dos dados, licença (texto de atribuição exigido pela CC-BY 4.0) e contagem por entidade."""
+    counts_row = session.get(CatalogMetadataModel, "counts")
+    return {
+        "source": SOURCE_BOOK,
+        "source_url": SOURCE_URL,
+        "license": "CC-BY-4.0",
+        "license_url": "https://creativecommons.org/licenses/by/4.0/legalcode",
+        "attribution": ATTRIBUTION,
+        "structured_data": "Open5e (https://open5e.com), document 'srd-2024'",
+        "import_version": current_import_version(session),
+        "counts": json.loads(counts_row.value) if counts_row else {},
+    }
 
 
 # --- DOMÍNIO 1: CLASSES, SUBCLASSES E FEATURE OPTIONS ---
@@ -894,10 +921,10 @@ def get_magic_item_detail(
     return MagicItemSchema.model_validate(obj)
 
 
-# --- DOMÍNIO 6: MONSTROS, BASTIÕES, GLOSSÁRIO DE REGRAS E BUSCA GLOBAL ---
+# --- DOMÍNIO 6: MONSTROS, GLOSSÁRIO DE REGRAS E BUSCA GLOBAL ---
 
 
-@app.get("/api/v1/monsters", response_model=PaginatedResponse[MonsterSchema], tags=["6. Monsters, Bastions & Rules"])
+@app.get("/api/v1/monsters", response_model=PaginatedResponse[MonsterSchema], tags=["6. Monsters & Rules"])
 def list_monsters(
     session: Annotated[Session, Depends(get_db)],
     page: Annotated[int, Query(ge=1)] = 1,
@@ -929,7 +956,7 @@ def list_monsters(
     "/api/v1/monsters/{slug}",
     response_model=MonsterSchema,
     responses={404: {"model": ProblemDetailsSchema}},
-    tags=["6. Monsters, Bastions & Rules"],
+    tags=["6. Monsters & Rules"],
 )
 def get_monster_detail(
     slug: str,
@@ -941,49 +968,7 @@ def get_monster_detail(
     return MonsterSchema.model_validate(obj)
 
 
-@app.get(
-    "/api/v1/bastion-facilities",
-    response_model=PaginatedResponse[BastionFacilitySchema],
-    tags=["6. Monsters, Bastions & Rules"],
-)
-def list_bastion_facilities(
-    session: Annotated[Session, Depends(get_db)],
-    page: Annotated[int, Query(ge=1)] = 1,
-    size: Annotated[int, Query(ge=1, le=100)] = 20,
-    max_level: Annotated[int | None, Query(ge=1, le=20)] = None,
-    order: Annotated[str | None, Query()] = None,
-) -> PaginatedResponse[BastionFacilitySchema]:
-    stmt = select(BastionFacilityModel)
-    if max_level is not None:
-        stmt = stmt.where(BastionFacilityModel.level_prerequisite <= max_level)
-    if order:
-        stmt = stmt.where(func.lower(BastionFacilityModel.bastion_order) == order.lower().strip())
-    return paginate_query(
-        session,
-        stmt.order_by(BastionFacilityModel.level_prerequisite.asc(), BastionFacilityModel.name.asc()),
-        page,
-        size,
-        BastionFacilitySchema,
-    )
-
-
-@app.get(
-    "/api/v1/bastion-facilities/{slug}",
-    response_model=BastionFacilitySchema,
-    responses={404: {"model": ProblemDetailsSchema}},
-    tags=["6. Monsters, Bastions & Rules"],
-)
-def get_bastion_facility_detail(
-    slug: str,
-    request: Request,
-    response: Response,
-    session: Annotated[Session, Depends(get_db)],
-) -> BastionFacilitySchema:
-    obj = get_by_slug_or_404(session, BastionFacilityModel, slug, "bastion facility", request, response)
-    return BastionFacilitySchema.model_validate(obj)
-
-
-@app.get("/api/v1/rules", response_model=PaginatedResponse[RuleGlossarySchema], tags=["6. Monsters, Bastions & Rules"])
+@app.get("/api/v1/rules", response_model=PaginatedResponse[RuleGlossarySchema], tags=["6. Monsters & Rules"])
 def list_rules(
     session: Annotated[Session, Depends(get_db)],
     page: Annotated[int, Query(ge=1)] = 1,
@@ -1003,7 +988,7 @@ def list_rules(
     "/api/v1/rules/{slug}",
     response_model=RuleGlossarySchema,
     responses={404: {"model": ProblemDetailsSchema}},
-    tags=["6. Monsters, Bastions & Rules"],
+    tags=["6. Monsters & Rules"],
 )
 def get_rule_detail(
     slug: str,
@@ -1015,7 +1000,7 @@ def get_rule_detail(
     return RuleGlossarySchema.model_validate(obj)
 
 
-@app.get("/api/v1/search", response_model=OmniSearchResponseSchema, tags=["6. Monsters, Bastions & Rules"])
+@app.get("/api/v1/search", response_model=OmniSearchResponseSchema, tags=["6. Monsters & Rules"])
 def omni_search(
     q: Annotated[str, Query(min_length=2, description="Termo de busca global no catálogo 2024")],
     session: Annotated[Session, Depends(get_db)],
@@ -1039,7 +1024,6 @@ def omni_search(
         ("gear", AdventuringGearModel, "/api/v1/equipment/gear"),
         ("magic_items", MagicItemModel, "/api/v1/magic-items"),
         ("monsters", MonsterModel, "/api/v1/monsters"),
-        ("bastion_facilities", BastionFacilityModel, "/api/v1/bastion-facilities"),
         ("rules", RuleGlossaryModel, "/api/v1/rules"),
     ]
 

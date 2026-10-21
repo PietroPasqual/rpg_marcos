@@ -1,0 +1,3 @@
+-r requirements.txt
+# Só para regenerar data/srd_5_2_1/srd_pdf_extract.json a partir do PDF oficial do SRD 5.2.1
+pymupdf>=1.24.0
